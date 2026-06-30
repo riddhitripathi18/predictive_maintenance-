@@ -1,0 +1,13 @@
+feature,importance
+Rotational speed [rpm],0.31725287
+power_W,0.22358938
+Tool wear [min],0.1404593
+torque_x_wear,0.11414208
+Torque [Nm],0.07391842
+temp_delta,0.054399543
+Type_encoded,0.034444477
+Process temperature [K],0.023065986
+Air temperature [K],0.018727982
+wear_pct,0.0
+high_torque,0.0
+high_wear,0.0

@@ -1,0 +1,39 @@
+
+========================================================
+  MODEL : XGBoost (ROC-AUC: 0.9776)
+========================================================
+  [BALANCED MODE] (Threshold: 0.82)
+    F1-Score  : 0.8281
+    Recall    : 0.7794  (Caught 77.9% of failures)
+    Precision : 0.8833
+    Confusion Matrix:
+[[1925    7]
+ [  15   53]]
+
+  [SAFETY-FIRST MODE] (Threshold: 0.08)
+    F1-Score  : 0.5210
+    Recall    : 0.9118  (Caught 91.2% of failures)
+    Precision : 0.3647
+    Confusion Matrix:
+[[1824  108]
+ [   6   62]]
+
+
+========================================================
+  MODEL : Random Forest (ROC-AUC: 0.9712)
+========================================================
+  [BALANCED MODE] (Threshold: 0.74)
+    F1-Score  : 0.7705
+    Recall    : 0.6912  (Caught 69.1% of failures)
+    Precision : 0.8704
+    Confusion Matrix:
+[[1925    7]
+ [  21   47]]
+
+  [SAFETY-FIRST MODE] (Threshold: 0.25)
+    F1-Score  : 0.5536
+    Recall    : 0.9118  (Caught 91.2% of failures)
+    Precision : 0.3974
+    Confusion Matrix:
+[[1838   94]
+ [   6   62]]
