@@ -227,6 +227,7 @@ with open(os.path.join(OUTPUT_DIR, "rf_threshold.pkl"), "wb") as f:
     pickle.dump(rf_best_f1, f)
 with open(os.path.join(OUTPUT_DIR, "rf_safety_threshold.pkl"), "wb") as f:
     pickle.dump(rf_safety, f)
+    
 
 # Print reports
 results_text = []
