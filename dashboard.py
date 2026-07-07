@@ -763,11 +763,18 @@ with tab2:
                 st.plotly_chart(fig_hist, width="stretch")
 
             # High-risk table
-            st.markdown('<div class="section-header">🚨 System Warning List (Machines exceeding limit)</div>',
+            st.markdown('<div class="section-header">🚨 Fleet Risk Status & Warning List</div>',
                         unsafe_allow_html=True)
-            hr = result_df[result_df["Failure Probability (%)"] >= (active_thresh * 100)].sort_values(
-                "Failure Probability (%)", ascending=False
-            )
+            
+            show_all = st.checkbox("🔍 Show all machines in fleet (uncheck to show warned/flagged machines only)", value=True)
+            
+            if show_all:
+                hr = result_df.sort_values("Failure Probability (%)", ascending=False)
+            else:
+                hr = result_df[result_df["Failure Probability (%)"] >= (active_thresh * 100)].sort_values(
+                    "Failure Probability (%)", ascending=False
+                )
+                
             show_cols = [c for c in ["UDI", "Type", "Air temperature [K]",
                                      "Process temperature [K]", "Rotational speed [rpm]",
                                      "Torque [Nm]", "Tool wear [min]",
@@ -776,9 +783,9 @@ with tab2:
             if not hr.empty:
                 st.dataframe(hr[show_cols].head(300).reset_index(drop=True), width="stretch", height=400)
                 st.download_button(
-                    "⬇️ Export Flagged Maintenance List (CSV)",
+                    "⬇️ Export Fleet Risk List (CSV)",
                     data=hr[show_cols].to_csv(index=False),
-                    file_name="maintenance_alarms.csv",
+                    file_name="fleet_risk_report.csv",
                     mime="text/csv",
                 )
             else:
