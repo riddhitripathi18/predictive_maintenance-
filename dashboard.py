@@ -377,23 +377,14 @@ def prepare_batch(df_raw):
 # ─────────────────────────────────────────────
 # HEADER & CONTROL BAR
 # ─────────────────────────────────────────────
-col_h1, col_h2 = st.columns([3, 1], gap="medium")
-with col_h1:
-    st.markdown("""
-    <div style='margin-bottom: 20px;'>
-      <h1 style='color:#3b82f6; margin:0; font-size:2.2rem; font-weight:700; letter-spacing:-0.5px;'>🏭 predictive_maint_system_v3.0</h1>
-      <p style='color:#64748b; margin:6px 0 0 0; font-size:0.95rem; font-family:"JetBrains Mono", monospace;'>
-        ENGINE: XGBoost + Random Forest &nbsp;|&nbsp; DATASET: AI4I 2020 &nbsp;|&nbsp; STATUS: <span class="pulse-indicator"></span> ONLINE
-      </p>
-    </div>
-    """, unsafe_allow_html=True)
-with col_h2:
-    st.markdown("""
-    <div style='background:rgba(255,255,255,0.02); border:1px solid rgba(255,255,255,0.05); border-radius:10px; padding:10px 15px; margin-top:5px; text-align:right;'>
-      <span style='color:#64748b; font-size:0.75rem; text-transform:uppercase; letter-spacing:1px;'>Model Precision</span><br/>
-      <span style='color:#10b981; font-size:1.3rem; font-weight:700;'>98.9% Acc</span>
-    </div>
-    """, unsafe_allow_html=True)
+st.markdown("""
+<div style='margin-bottom: 20px;'>
+  <h1 style='color:#3b82f6; margin:0; font-size:2.2rem; font-weight:700; letter-spacing:-0.5px;'>🏭 predictive_maint_system_v3.0</h1>
+  <p style='color:#64748b; margin:6px 0 0 0; font-size:0.95rem; font-family:"JetBrains Mono", monospace;'>
+    ENGINE: XGBoost + Random Forest &nbsp;|&nbsp; DATASET: AI4I 2020 &nbsp;|&nbsp; STATUS: <span class="pulse-indicator"></span> ONLINE
+  </p>
+</div>
+""", unsafe_allow_html=True)
 
 
 if not models_loaded:
@@ -438,6 +429,47 @@ with st.sidebar:
     st.caption("Primary Model: XGBoost v3.3.0")
     st.caption("Scaler Matrix: standard_scaler")
     st.caption("Sub-models: 5 Multi-Output Units")
+    st.divider()
+    st.markdown("#### 📊 RF Constrained Model Metrics")
+    st.markdown("""
+    <div style='background:rgba(17,24,39,0.6); border:1px solid rgba(255,255,255,0.06);
+                border-radius:12px; padding:14px; font-size:0.82rem; line-height:2;'>
+      <div style='display:flex; justify-content:space-between;'>
+        <span style='color:#94a3b8;'>Accuracy</span>
+        <span style='color:#10b981; font-weight:700;'>94.60%</span>
+      </div>
+      <div style='display:flex; justify-content:space-between;'>
+        <span style='color:#94a3b8;'>F1-Score</span>
+        <span style='color:#10b981; font-weight:700;'>0.5345</span>
+      </div>
+      <div style='display:flex; justify-content:space-between;'>
+        <span style='color:#94a3b8;'>Recall</span>
+        <span style='color:#10b981; font-weight:700;'>91.18%</span>
+      </div>
+      <div style='display:flex; justify-content:space-between;'>
+        <span style='color:#94a3b8;'>Precision</span>
+        <span style='color:#f59e0b; font-weight:700;'>37.80%</span>
+      </div>
+      <div style='display:flex; justify-content:space-between;'>
+        <span style='color:#94a3b8;'>PR-AUC</span>
+        <span style='color:#10b981; font-weight:700;'>0.7213</span>
+      </div>
+      <div style='display:flex; justify-content:space-between;'>
+        <span style='color:#94a3b8;'>Train/Test Gap</span>
+        <span style='color:#10b981; font-weight:700;'>0.0492 (OK)</span>
+      </div>
+      <div style='display:flex; justify-content:space-between;'>
+        <span style='color:#94a3b8;'>False Positives</span>
+        <span style='color:#f87171; font-weight:700;'>107</span>
+      </div>
+      <div style='display:flex; justify-content:space-between;'>
+        <span style='color:#94a3b8;'>False Negatives</span>
+        <span style='color:#f87171; font-weight:700;'>6</span>
+      </div>
+      <div style='margin-top:8px; padding-top:8px; border-top:1px solid rgba(255,255,255,0.06);
+                  color:#64748b; font-size:0.75rem;'>Threshold: 0.50 &nbsp;|&nbsp; Test: 2,000 rows</div>
+    </div>
+    """, unsafe_allow_html=True)
     st.divider()
     st.caption("Confidential. Internal plant monitoring systems only.")
 
@@ -732,6 +764,36 @@ with tab2:
             k3.markdown(custom_metric_card("🟡 Warning Risks", f"{n_warning:,}", f"{n_warning/total*100:.1f}%", "#f59e0b"), unsafe_allow_html=True)
             k4.markdown(custom_metric_card("🟢 Stable Units", f"{n_safe:,}", f"{n_safe/total*100:.1f}%", "#10b981"), unsafe_allow_html=True)
             k5.markdown(custom_metric_card("Triggered Alarms", f"{n_predicted:,}", f"Limit: {active_thresh*100:.0f}%", "#ef4444" if n_predicted>0 else "#10b981"), unsafe_allow_html=True)
+
+            # ── LIVE EVALUATION METRICS ON EXTERNAL DATA ──────────────────────────────
+            if "Machine failure" in result_df.columns:
+                from sklearn.metrics import (
+                    accuracy_score, precision_score, recall_score,
+                    f1_score, average_precision_score, confusion_matrix
+                )
+                y_true  = result_df["Machine failure"].astype(int)
+                y_pred  = result_df["Predicted Failure"].astype(int)
+                y_proba = result_df["Failure Probability (%)"] / 100.0
+
+                ext_acc   = accuracy_score(y_true, y_pred)
+                ext_prec  = precision_score(y_true, y_pred, zero_division=0)
+                ext_rec   = recall_score(y_true, y_pred, zero_division=0)
+                ext_f1    = f1_score(y_true, y_pred, zero_division=0)
+                ext_prauc = average_precision_score(y_true, y_proba)
+                tn, fp, fn, tp = confusion_matrix(y_true, y_pred).ravel()
+
+                st.markdown('<div class="section-header">📐 Model Accuracy on Your Uploaded Data</div>',
+                            unsafe_allow_html=True)
+                st.caption("Metrics computed against the **Machine failure** ground-truth labels in your file — not the training dataset.")
+
+                m1, m2, m3, m4, m5, m6, m7 = st.columns(7)
+                m1.markdown(custom_metric_card("Accuracy",  f"{ext_acc*100:.2f}", "%",     "#3b82f6"), unsafe_allow_html=True)
+                m2.markdown(custom_metric_card("Precision", f"{ext_prec:.4f}",    "score", "#10b981" if ext_prec >= 0.5 else "#f59e0b"), unsafe_allow_html=True)
+                m3.markdown(custom_metric_card("Recall",    f"{ext_rec:.4f}",     "score", "#10b981" if ext_rec  >= 0.7 else "#f59e0b"), unsafe_allow_html=True)
+                m4.markdown(custom_metric_card("F1-Score",  f"{ext_f1:.4f}",      "score", "#10b981" if ext_f1   >= 0.5 else "#f59e0b"), unsafe_allow_html=True)
+                m5.markdown(custom_metric_card("PR-AUC",    f"{ext_prauc:.4f}",   "score", "#10b981" if ext_prauc>= 0.6 else "#f59e0b"), unsafe_allow_html=True)
+                m6.markdown(custom_metric_card("False Pos", f"{fp}",              "rows",  "#f59e0b"), unsafe_allow_html=True)
+                m7.markdown(custom_metric_card("False Neg", f"{fn}",              "rows",  "#ef4444"), unsafe_allow_html=True)
 
             c1, c2 = st.columns(2)
             with c1:

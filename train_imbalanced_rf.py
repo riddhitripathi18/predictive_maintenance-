@@ -94,9 +94,30 @@ X_train["Type"] = le.fit_transform(X_train["Type"])
 X_test["Type"] = le.transform(X_test["Type"])
 
 # 3. TRAIN RANDOM FOREST CLASSIFIER
-print("\nTraining RandomForestClassifier with class_weight='balanced'...")
-rf = RandomForestClassifier(class_weight="balanced", random_state=42, n_jobs=-1)
+print("\nTraining RandomForestClassifier with class_weight='balanced' (constrained)...")
+rf = RandomForestClassifier(
+    class_weight="balanced",
+    random_state=42,
+    n_jobs=-1,
+    max_depth=8,           # stops trees from growing infinitely deep
+    min_samples_leaf=5,    # each final decision must cover at least 5 real rows
+    min_samples_split=10,  # need at least 10 rows before splitting further
+    n_estimators=300       # 300 trees for stability
+)
 rf.fit(X_train, y_train)
+
+# --- MEMORIZATION CHECK ---
+train_f1 = f1_score(y_train, rf.predict(X_train))
+test_f1_default = f1_score(y_test, rf.predict(X_test))
+gap = train_f1 - test_f1_default
+print(f"\nMemorization Check:")
+print(f"  Train F1 : {train_f1:.4f}")
+print(f"  Test  F1 : {test_f1_default:.4f}")
+print(f"  Gap      : {gap:.4f}")
+if gap > 0.15:
+    print("  [WARNING] Still overfitting -- gap too large")
+else:
+    print("  [OK] Gap is healthy -- model is generalizing")
 
 # 4. EVALUATE ON TEST SET (PROBABILITIES)
 y_probs = rf.predict_proba(X_test)[:, 1]
@@ -148,3 +169,40 @@ print(f"{'='*60}")
 print("Classification Report:")
 print(classification_report(y_test, best_preds, target_names=["No Failure", "Machine Failure"], digits=4))
 print(f"{'='*60}")
+
+# 7. SANITY CHECK BATCHES
+# Build two sanity check batches from test data and evaluate them
+print(f"\n{'='*60}")
+print("  SANITY CHECK BATCHES")
+print(f"{'='*60}")
+
+# Batch 1: All failure rows from the test set
+sanity1 = test_df[test_df["Machine failure"] == 1].copy()
+# Batch 2: All safe rows from the test set
+sanity2 = test_df[test_df["Machine failure"] == 0].sample(n=50, random_state=42).copy()
+
+for batch_name, batch_df in [("Sanity Batch 1 (all failure rows)", sanity1),
+                              ("Sanity Batch 2 (50 random safe rows)", sanity2)]:
+    X_batch = batch_df.drop(columns=["UDI", "Machine failure"])
+    y_batch = batch_df["Machine failure"]
+    X_batch["Type"] = le.transform(X_batch["Type"])
+    batch_probs = rf.predict_proba(X_batch)[:, 1]
+    batch_preds = (batch_probs >= best_threshold).astype(int)
+    
+    correct = (batch_preds == y_batch).sum()
+    print(f"\n  {batch_name}:")
+    print(f"    Rows: {len(batch_df)} | Correct: {correct} | Missed: {len(batch_df) - correct}")
+    print(f"    Avg failure probability: {batch_probs.mean() * 100:.2f}%")
+    print(f"    Min: {batch_probs.min() * 100:.2f}%  Max: {batch_probs.max() * 100:.2f}%")
+    # Show worst missed cases
+    batch_df = batch_df.copy()
+    batch_df["Failure Probability (%)"] = (batch_probs * 100).round(2)
+    batch_df["Predicted"] = batch_preds
+    missed = batch_df[batch_df["Predicted"] != batch_df["Machine failure"]]
+    if not missed.empty:
+        print(f"    Missed rows (showing up to 5):")
+        print(missed[["UDI", "Type", "Rotational speed [rpm]", "Torque [Nm]",
+                       "Tool wear [min]", "Machine failure", "Failure Probability (%)"]].head(5).to_string(index=False))
+    else:
+        print("    [OK] Zero misses on this batch!")
+print(f"\n{'='*60}")
