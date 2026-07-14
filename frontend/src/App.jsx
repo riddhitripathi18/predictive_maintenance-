@@ -953,6 +953,34 @@ export default function App() {
                         }}></div>
                       </div>
                     </div>
+
+                    {/* Collapsible Diagnostics Detail */}
+                    <div style={{ marginTop: '14px', borderTop: '1px dashed rgba(255,255,255,0.1)', paddingTop: '10px' }}>
+                      <details style={{ cursor: 'pointer' }}>
+                        <summary style={{ fontSize: '0.8rem', color: 'var(--color-primary)', outline: 'none', userSelect: 'none', fontWeight: 600 }}>
+                          📊 View Thermal Physics Diagnostics
+                        </summary>
+                        <div style={{ marginTop: '8px', cursor: 'default', background: 'rgba(0,0,0,0.2)', padding: '10px', borderRadius: '6px', fontSize: '0.8rem' }}>
+                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '8px' }}>
+                            <div>🌡️ <strong>LMTD:</strong> {hx.lmtd ? `${hx.lmtd.toFixed(1)}°C` : '—'}</div>
+                            <div>🤏 <strong>Pinch Temp:</strong> {hx.temperature_pinch ? `${hx.temperature_pinch.toFixed(1)}°C` : '—'}</div>
+                            <div>❤️ <strong>Health Score:</strong> {hx.health_score ? `${hx.health_score.toFixed(1)}/100` : '—'}</div>
+                            <div>🎯 <strong>Fouling Limit:</strong> {hx.fouling_limit ? hx.fouling_limit.toExponential(2) : '—'}</div>
+                          </div>
+                          
+                          {hx.diagnostics && hx.diagnostics.length > 0 && (
+                            <div style={{ marginTop: '8px', borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '8px' }}>
+                              <div style={{ fontWeight: 600, marginBottom: '4px', color: 'var(--text-muted)' }}>Status Messages:</div>
+                              <ul style={{ paddingLeft: '14px', margin: 0, color: '#e2e8f0', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                                {hx.diagnostics.map((d, idx) => (
+                                  <li key={idx}>{d}</li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+                        </div>
+                      </details>
+                    </div>
                   </div>
 
                   <div style={{ borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '12px', marginTop: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>

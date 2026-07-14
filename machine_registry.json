@@ -112,7 +112,115 @@
       "shell_temp_out": 120.0,
       "shell_flow_kg_s": 8.0,
       "days_since_last_clean": 180
+    },
+    {
+      "id": "HX-101",
+      "type": "Heat Exchanger",
+      "location": "Facility",
+      "description": "Reactor Feed Preheater",
+      "product_grade": "M (Medium)",
+      "sensors": {
+        "shell_temp_in": 120,
+        "shell_temp_out": 95,
+        "tube_temp_in": 60,
+        "tube_temp_out": 80,
+        "shell_flow_kg_s": 10,
+        "tube_flow_kg_s": 12,
+        "design_U": 1000,
+        "heat_area_m2": 50,
+        "fluid_type": "process_liquid",
+        "fouling_factor": 0,
+        "days_since_last_clean": 0
+      },
+      "degradation": {
+        "wear_rate_per_month": 5,
+        "rpm_drift_per_month": -10,
+        "torque_drift_per_month": 0.5,
+        "air_temp_drift_per_month": 0.05,
+        "proc_temp_drift_per_month": 0.1
+      },
+      "failure_modes": [
+        "Tube Fouling",
+        "Shell Fouling",
+        "Tube Leak",
+        "Tube Vibration",
+        "Bypass Failure"
+      ],
+      "created_at": "2026-07-14T14:13:00.044962",
+      "updated_at": "2026-07-14T14:13:00.044974"
+    },
+    {
+      "id": "HX-101",
+      "type": "Heat Exchanger",
+      "location": "Facility",
+      "description": "Reactor Feed Preheater",
+      "product_grade": "M (Medium)",
+      "sensors": {
+        "shell_temp_in": 120,
+        "shell_temp_out": 95,
+        "tube_temp_in": 60,
+        "tube_temp_out": 80,
+        "shell_flow_kg_s": 10,
+        "tube_flow_kg_s": 12,
+        "design_U": 1000,
+        "heat_area_m2": 50,
+        "fluid_type": "process_liquid",
+        "fouling_factor": 0,
+        "days_since_last_clean": 0
+      },
+      "degradation": {
+        "wear_rate_per_month": 5,
+        "rpm_drift_per_month": -10,
+        "torque_drift_per_month": 0.5,
+        "air_temp_drift_per_month": 0.05,
+        "proc_temp_drift_per_month": 0.1
+      },
+      "failure_modes": [
+        "Tube Fouling",
+        "Shell Fouling",
+        "Tube Leak",
+        "Tube Vibration",
+        "Bypass Failure"
+      ],
+      "created_at": "2026-07-14T14:13:06.232202",
+      "updated_at": "2026-07-14T14:13:06.232225"
+    },
+    {
+      "id": "HX-101",
+      "type": "Heat Exchanger",
+      "location": "Facility",
+      "description": "Reactor Feed Preheater",
+      "product_grade": "M (Medium)",
+      "sensors": {
+        "shell_temp_in": 120,
+        "shell_temp_out": 95,
+        "tube_temp_in": 60,
+        "tube_temp_out": 80,
+        "shell_flow_kg_s": 10,
+        "tube_flow_kg_s": 12,
+        "design_U": 1000,
+        "heat_area_m2": 50,
+        "fluid_type": "process_liquid",
+        "fouling_factor": -0.00036,
+        "days_since_last_clean": 0
+      },
+      "degradation": {
+        "wear_rate_per_month": 5,
+        "rpm_drift_per_month": -10,
+        "torque_drift_per_month": 0.5,
+        "air_temp_drift_per_month": 0.05,
+        "proc_temp_drift_per_month": 0.1
+      },
+      "failure_modes": [
+        "Tube Fouling",
+        "Shell Fouling",
+        "Tube Leak",
+        "Tube Vibration",
+        "Bypass Failure"
+      ],
+      "created_at": "2026-07-14T14:13:28.069799",
+      "updated_at": "2026-07-14T14:13:28.069809"
     }
   ],
-  "last_updated": "2026-07-08T12:05:00.835401"
+  "last_updated": "2026-07-14T14:13:28.070135"
 }

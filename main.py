@@ -453,13 +453,17 @@ def get_exchangers():
             "design_effectiveness": u.design_effectiveness,
             "fouling_factor": u.fouling_factor,
             "fouling_limit": u.fouling_limit,
-            "foul_pct": u.fouling_factor / u.fouling_limit * 100,
+            "foul_pct": (u.fouling_factor / u.fouling_limit * 100) if u.fouling_limit else 0,
             "heat_duty_kw": u.heat_duty_kw,
             "current_U": u.current_U,
             "criticality_score": u.criticality_score,
             "days_to_clean": u.days_to_clean,
             "status_color": "#ef4444" if u.criticality_score >= 80 else ("#f59e0b" if u.criticality_score >= 50 else "#10b981"),
-            "status_label": "CRITICAL" if u.criticality_score >= 80 else ("WARNING" if u.criticality_score >= 50 else "SAFE")
+            "status_label": "CRITICAL" if u.criticality_score >= 80 else ("WARNING" if u.criticality_score >= 50 else "SAFE"),
+            "lmtd": u.lmtd,
+            "temperature_pinch": u.temperature_pinch,
+            "diagnostics": u.diagnostics,
+            "health_score": u.health_score
         } for u in hx_units_sorted
     ]
 
