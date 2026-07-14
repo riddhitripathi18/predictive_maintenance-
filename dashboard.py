@@ -477,12 +477,11 @@ with st.sidebar:
 # ─────────────────────────────────────────────
 # TABS SYSTEM
 # ─────────────────────────────────────────────
-tab1, tab_ttf, tab_registry, tab2, tab3 = st.tabs([
+tab1, tab2, tab3, tab_hx = st.tabs([
     "🔬  Digital Twin Simulator",
-    "🕐  Time-to-Failure Forecast",
-    "🏭  Plant Asset Registry",
     "📦  Fleet Batch Analyzer",
     "📊  Facility Data Explorer",
+    "♨️  Heat Exchanger Monitor",
 ])
 
 
@@ -957,609 +956,176 @@ with tab3:
     st.plotly_chart(fig_wear, width="stretch")
 
 
-# ═══════════════════════════════════════════════════════════
-# TAB TTF — TIME-TO-FAILURE FORECAST
-# ═══════════════════════════════════════════════════════════
-with tab_ttf:
-    st.markdown('<div class="section-header">🕐 Time-to-Failure Forecasting Engine</div>', unsafe_allow_html=True)
-    st.caption("Simulates how current parameter trends will evolve month-by-month and predicts exactly when this machine will cross the failure threshold.")
-
-    # ── Left column: collect all inputs ──────────────────────
-    ttf_col_left, ttf_col_right = st.columns([1, 1], gap="large")
-
-    with ttf_col_left:
-        st.markdown("#### ⚙️ Machine Parameters")
-        ttf_type    = st.selectbox("Component Grade", ["L (Low)", "M (Medium)", "H (High)"], key="ttf_type")
-        ttf_air     = st.slider("Air Temperature (K)",       295.0, 305.0, 300.0, 0.1, key="ttf_air")
-        ttf_proc    = st.slider("Process Temperature (K)",   305.0, 315.0, 310.0, 0.1, key="ttf_proc")
-        ttf_rpm     = st.slider("Rotational Speed (RPM)",    1168,  2886,  1500,  10,  key="ttf_rpm")
-        ttf_torque  = st.slider("Torque (Nm)",               3.8,   76.6,  38.0,  0.1, key="ttf_torque")
-        ttf_wear    = st.slider("Current Tool Wear (min)",   0,     253,   80,    1,   key="ttf_wear")
-        ttf_horizon = st.slider("Forecast Horizon (months)", 3,     24,    12,    1,   key="ttf_horizon")
-
-        st.markdown("#### 📉 Degradation Rates (per month)")
-        ttf_wear_rate  = st.number_input("Wear accumulation (min/month)",  value=12.0, min_value=0.0, max_value=50.0, step=0.5, key="ttf_wear_rate")
-        ttf_rpm_drift  = st.number_input("RPM drift (RPM/month)",          value=-25.0, min_value=-200.0, max_value=200.0, step=5.0, key="ttf_rpm_drift")
-        ttf_torq_drift = st.number_input("Torque drift (Nm/month)",        value=1.2,  min_value=-5.0, max_value=10.0, step=0.1, key="ttf_torq_drift")
-
-        st.markdown("#### 🔭 What-If Scenario Override")
-        st.caption("Apply an immediate one-time adjustment to see how it shifts the forecast.")
-        sc_rpm    = st.number_input("RPM adjustment (Δ)",         value=0.0,  step=10.0, key="sc_rpm")
-        sc_torque = st.number_input("Torque adjustment (Δ Nm)",   value=0.0,  step=1.0,  key="sc_torque")
-        sc_wear   = st.number_input("Tool wear adjustment (Δ min)",value=0.0, step=5.0,  key="sc_wear")
-
-    # ── Compute OUTSIDE columns so errors are visible ─────────
-    ttf_type_enc = TYPE_MAP[ttf_type]
-    ttf_deg = {
-        "wear_rate_per_month":       ttf_wear_rate,
-        "rpm_drift_per_month":       ttf_rpm_drift,
-        "torque_drift_per_month":    ttf_torq_drift,
-        "air_temp_drift_per_month":  0.05,
-        "proc_temp_drift_per_month": 0.1,
-    }
-    ttf_thresh = min(float(xgb_thresh_safety), 0.35)
-
-    ttf_error = None
-    result_base = None
-    result_scen = None
-    try:
-        result_base = run_ttf_forecast(
-            xgb_model=xgb_model,
-            scaler=scaler,
-            air_temp=float(ttf_air),
-            proc_temp=float(ttf_proc),
-            rpm=float(ttf_rpm),
-            torque=float(ttf_torque),
-            tool_wear=float(ttf_wear),
-            type_enc=ttf_type_enc,
-            active_threshold=ttf_thresh,
-            horizon_months=int(ttf_horizon),
-            degradation=ttf_deg,
-            scenario_overrides={"rpm": 0.0, "torque": 0.0, "tool_wear": 0.0}
-        )
-        any_override = sc_rpm != 0.0 or sc_torque != 0.0 or sc_wear != 0.0
-        if any_override:
-            result_scen = run_ttf_forecast(
-                xgb_model=xgb_model,
-                scaler=scaler,
-                air_temp=float(ttf_air),
-                proc_temp=float(ttf_proc),
-                rpm=float(ttf_rpm),
-                torque=float(ttf_torque),
-                tool_wear=float(ttf_wear),
-                type_enc=ttf_type_enc,
-                active_threshold=ttf_thresh,
-                horizon_months=int(ttf_horizon),
-                degradation=ttf_deg,
-                scenario_overrides={"rpm": sc_rpm, "torque": sc_torque, "tool_wear": sc_wear}
-            )
-    except Exception as _e:
-        import sys
-        import traceback
-        traceback.print_exc(file=sys.stderr)
-        ttf_error = str(_e)
-
-    # ── Right column: display results ─────────────────────────
-    with ttf_col_right:
-        if ttf_error:
-            st.error(f"⚠️ Forecast error: {ttf_error}")
-        elif result_base is None:
-            st.warning("Adjust parameters on the left to generate a forecast.")
-        else:
-            fm = result_base.predicted_fail_month
-            cur_prob = result_base.probabilities[0] * 100
-            end_prob = result_base.probabilities[-1] * 100
-            delta_prob = end_prob - cur_prob
-
-            # Live metric cards
-            pr1, pr2, pr3 = st.columns(3)
-            pr1.markdown(custom_metric_card("Current Risk", f"{cur_prob:.1f}", "%",
-                "#ef4444" if cur_prob >= 65 else ("#f59e0b" if cur_prob >= 35 else "#10b981")
-            ), unsafe_allow_html=True)
-            pr2.markdown(custom_metric_card(f"Risk @ Month {ttf_horizon}", f"{end_prob:.1f}", "%",
-                "#ef4444" if end_prob >= 65 else ("#f59e0b" if end_prob >= 35 else "#10b981")
-            ), unsafe_allow_html=True)
-            if fm is not None:
-                pr3.markdown(custom_metric_card("Est. Failure", f"Month {fm}", "Predicted", "#ef4444"), unsafe_allow_html=True)
-            else:
-                pr3.markdown(custom_metric_card("Est. Failure", "Safe", f"> {ttf_horizon} mo", "#10b981"), unsafe_allow_html=True)
-
-            # --- Status Alert Banner ---
-            if fm == 0:
-                st.markdown(
-                    f'<div class="alert-critical"><h2>🚨 IMMEDIATE INSPECTION REQUIRED 🚨</h2>'
-                    f'<p style="color:#eee;margin:6px 0 0;">Machine failure probability is currently at <b>{cur_prob:.1f}%</b>, exceeding the safety threshold.<br/>'
-                    f'<b>Maintenance Suggestion:</b> Shut down machine immediately. Swap tools, inspect bearings, and recalibrate load parameters.</p></div>',
-                    unsafe_allow_html=True,
-                )
-            elif fm is not None:
-                inv_msg = "Perform general mechanical maintenance and reduce peak torque load."
-                if result_base.interventions:
-                    top_inv = result_base.interventions[0]
-                    inv_msg = f"{top_inv['action']} by {top_inv['adjustment']} ({top_inv['gain_label']})."
-                
-                alert_class = "alert-critical" if fm <= 3 else "alert-warning"
-                alert_icon = "🚨" if fm <= 3 else "⚠️"
-                st.markdown(
-                    f'<div class="{alert_class}"><h2>{alert_icon} FAILS IN {fm} MONTHS {alert_icon}</h2>'
-                    f'<p style="color:#eee;margin:6px 0 0;">Projected to cross safety threshold in Month {fm} under current degradation rates.<br/>'
-                    f'<b>Maintenance Suggestion:</b> {inv_msg}</p></div>',
-                    unsafe_allow_html=True,
-                )
-            else:
-                st.markdown(
-                    f'<div class="alert-safe"><h2>🟢 COMPONENT HEALTH STABLE</h2>'
-                    f'<p style="color:#eee;margin:6px 0 0;">Machine is predicted safe for the full {ttf_horizon}-month horizon.<br/>'
-                    f'<b>Maintenance Suggestion:</b> Continue standard schedule. Periodic sensor monitoring and standard calibration active.</p></div>',
-                    unsafe_allow_html=True,
-                )
-
-            # Initialize Plotly Figure
-            fig_ttf = go.Figure()
-
-            # Confidence band
-            fig_ttf.add_trace(go.Scatter(
-                x=result_base.months + result_base.months[::-1],
-                y=[v*100 for v in result_base.confidence_upper] + [v*100 for v in result_base.confidence_lower[::-1]],
-                fill='toself', fillcolor='rgba(59,130,246,0.12)',
-                line=dict(color='rgba(255,255,255,0)'), name='Uncertainty Band', showlegend=True
-            ))
-
-            # Baseline trajectory
-            fig_ttf.add_trace(go.Scatter(
-                x=result_base.months, y=[p*100 for p in result_base.probabilities],
-                mode='lines+markers', name='Baseline Trajectory',
-                line=dict(color='#3b82f6', width=3),
-                marker=dict(size=6, color='#3b82f6', line=dict(color='white', width=1))
-            ))
-
-            # Scenario overlay
-            if result_scen:
-                fig_ttf.add_trace(go.Scatter(
-                    x=result_scen.months, y=[p*100 for p in result_scen.probabilities],
-                    mode='lines+markers', name='What-If Scenario',
-                    line=dict(color='#10b981', width=3, dash='dash'),
-                    marker=dict(size=6)
-                ))
-
-            # TTF threshold line
-            fig_ttf.add_hline(
-                y=ttf_thresh*100,
-                line_dash="dot", line_color="#ef4444", line_width=2,
-                annotation_text=f"TTF Alert ({ttf_thresh*100:.0f}%)",
-                annotation_position="bottom right"
-            )
-
-            # Failure month marker
-            if fm and fm > 0:
-                fig_ttf.add_vline(
-                    x=fm, line_dash="dash", line_color="#f59e0b", line_width=2,
-                    annotation_text=f"⚠️ Failure: Month {fm}", annotation_position="top left"
-                )
-            if result_scen and result_scen.predicted_fail_month:
-                sfm = result_scen.predicted_fail_month
-                if sfm != fm:
-                    fig_ttf.add_vline(
-                        x=sfm, line_dash="dot", line_color="#10b981", line_width=2,
-                        annotation_text=f"✅ Scenario: Month {sfm}", annotation_position="top right"
-                    )
-
-            # Dynamic y_max scaling
-            all_probs = result_base.probabilities
-            if result_scen:
-                all_probs = all_probs + result_scen.probabilities
-            max_prob = max(all_probs) * 100
-            y_max = max(105.0, max_prob + 10.0)
-
-            fig_ttf.update_layout(
-                paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(17,24,39,0.5)",
-                font_color="white", height=380,
-                margin=dict(l=10, r=10, t=20, b=10),
-                xaxis=dict(title="Month", showgrid=True, gridcolor="rgba(255,255,255,0.05)",
-                           tickmode='linear', dtick=1),
-                yaxis=dict(title="Failure Probability (%)",
-                           range=[0, y_max],          # auto-scaled to actual data range
-                           showgrid=True, gridcolor="rgba(255,255,255,0.05)"),
-                legend=dict(orientation="h", yanchor="bottom", y=1.01, xanchor="right", x=1),
-            )
-            st.plotly_chart(fig_ttf, use_container_width=True)
-
-    if result_base is not None:
-        # ── Intervention Recommendations ──────────────────────────
-        st.markdown('<div class="section-header">🛠️ Intervention Recommendations — Delay Failure</div>', unsafe_allow_html=True)
-        interventions = result_base.interventions
-        if interventions:
-            int_cols = st.columns(min(len(interventions), 3))
-            for idx, inv in enumerate(interventions[:3]):
-                col = int_cols[idx % 3]
-                gain = inv["gain_months"]
-                color = "#10b981" if gain and gain >= 3 else "#f59e0b"
-                card_html = f"""
-                <div style="background:rgba(17,24,39,0.6); border:1px solid rgba(255,255,255,0.06);
-                            border-top:3px solid {color}; border-radius:12px; padding:18px; margin:6px 0;">
-                    <p style="margin:0; color:#94a3b8; font-size:0.75rem; text-transform:uppercase; letter-spacing:1.5px; font-weight:600;">Intervention {idx+1}</p>
-                    <h3 style="margin:8px 0 4px; color:#fff; font-size:1.1rem;">{inv['action']}</h3>
-                    <p style="margin:0; color:#cbd5e1; font-size:0.9rem;">Adjust <b>{inv['parameter']}</b> by <b>{'+' if inv['adjustment']>=0 else ''}{inv['adjustment']}</b> ({'+' if inv['pct_change']>=0 else ''}{inv['pct_change']}%)</p>
-                    <p style="margin:8px 0 0; color:{color}; font-size:0.85rem; font-weight:600;">{inv['gain_label']}</p>
-                </div>
-                """
-                col.markdown(card_html, unsafe_allow_html=True)
-            if len(interventions) > 3:
-                with st.expander(f"Show {len(interventions)-3} more interventions"):
-                    for inv in interventions[3:]:
-                        st.markdown(f"• **{inv['action']}**: adjust {inv['parameter']} by {inv['adjustment']:+} → {inv['gain_label']}")
-        else:
-            st.success("✅ No interventions needed — machine is predicted safe within the horizon.")
-
-        # ── Conditional Safe Analysis ──────────────────────────────
-        st.markdown('<div class="section-header">🔐 Conditional Safety Analysis</div>', unsafe_allow_html=True)
-        cond_result = conditional_safe_forecast(
-            xgb_model, scaler,
-            ttf_air, ttf_proc, ttf_rpm, ttf_torque, ttf_wear,
-            ttf_type_enc, ttf_thresh, ttf_horizon, ttf_deg
-        )
-        if cond_result["safe_conditions"]:
-            st.info(f"Machine will remain safe for {ttf_horizon} months **IF** any of the following conditions hold:")
-            for cond in cond_result["safe_conditions"]:
-                st.markdown(f'<div class="insight-box">{cond}</div>', unsafe_allow_html=True)
-        else:
-            st.warning("No single parameter freeze prevents failure within the forecast horizon. Combined interventions are required.")
-
-        # ── Projected Parameters Table ─────────────────────────────
-        st.markdown('<div class="section-header">📋 Month-by-Month Projected Parameters</div>', unsafe_allow_html=True)
-        proj_df = pd.DataFrame(result_base.projected_params)
-        proj_df["prob_pct"] = (proj_df["prob"] * 100).round(1)
-        proj_df["Risk"] = proj_df["prob"].apply(
-            lambda p: "🔴 CRITICAL" if p >= 0.65 else ("🟡 WARNING" if p >= 0.35 else "🟢 SAFE")
-        )
-        proj_df = proj_df.rename(columns={
-            "month": "Month", "air_temp": "Air Temp (K)", "proc_temp": "Proc Temp (K)",
-            "rpm": "RPM", "torque": "Torque (Nm)", "tool_wear": "Wear (min)", "prob_pct": "Failure Prob (%)"
-        })
-        show_proj = ["Month", "Air Temp (K)", "Proc Temp (K)", "RPM", "Torque (Nm)", "Wear (min)", "Failure Prob (%)", "Risk"]
-        st.dataframe(proj_df[show_proj], use_container_width=True, height=320)
-
 
 # ═══════════════════════════════════════════════════════════
-# TAB REGISTRY — PLANT ASSET REGISTRY
+# TAB HX — HEAT EXCHANGER Monitor
 # ═══════════════════════════════════════════════════════════
-with tab_registry:
-    st.markdown('<div class="section-header">🏭 Dynamic Plant Asset Registry</div>', unsafe_allow_html=True)
-    st.caption("Register any machine type in your chemical facility. Each asset gets its own TTF forecast and failure mode analysis. Heat exchangers include physics-based per-unit ranking.")
+with tab_hx:
+    st.markdown('<div class="section-header">♨️ Heat Exchanger Specialist Panel</div>', unsafe_allow_html=True)
+    st.caption("Physics-based fouling analysis using effectiveness-NTU method and LMTD. Identifies which specific HX unit requires cleaning or bypass next.")
 
     # Initialize registry
     if "registry" not in st.session_state:
         st.session_state.registry = MachineRegistry(BASE_DIR)
     registry: MachineRegistry = st.session_state.registry
 
-    reg_tab_add, reg_tab_fleet, reg_tab_hx = st.tabs([
-        "➕ Add / Edit Asset", "📋 Fleet Overview", "♨️ Heat Exchanger Specialist"
-    ])
+    hx_assets = registry.get_hx_units()
 
-    # ── Sub-tab: Add Asset ──────────────────────────────────────
-    with reg_tab_add:
-        st.markdown("#### Register a New Asset")
-        ra1, ra2, ra3 = st.columns([1, 1, 1], gap="medium")
-        with ra1:
-            new_type = st.selectbox("Machine Type", MACHINE_TYPES, key="reg_new_type")
-        with ra2:
-            new_id   = st.text_input("Asset ID (leave blank for auto)", placeholder="e.g. PUMP-201", key="reg_new_id")
-        with ra3:
-            new_loc  = st.text_input("Location / Unit", placeholder="e.g. Unit 3 - Reactor Feed", key="reg_new_loc")
-        new_desc = st.text_input("Description (optional)", key="reg_new_desc")
+    # Allow adding quick HX units
+    with st.expander("➕ Quick-Add Heat Exchanger Unit", expanded=(len(hx_assets) == 0)):
+        st.markdown("**Add a Heat Exchanger unit for analysis:**")
+        hqc1, hqc2, hqc3 = st.columns(3)
+        hq_id    = hqc1.text_input("Unit ID", placeholder="HX-101", key="hq_id")
+        hq_desc  = hqc2.text_input("Description", placeholder="Reactor Feed Preheater", key="hq_desc")
+        hq_fluid = hqc3.selectbox("Shell-side fluid", list(FOULING_LIMITS.keys()), index=1, key="hq_fluid")
 
-        st.markdown("##### 📡 Sensor Readings")
-        template = registry.build_default_asset(new_type, new_id.strip() or "", new_loc)
-        sensor_fields = SENSOR_FIELDS_BY_TYPE.get(new_type, [])
-        sensor_cols = st.columns(min(3, len(sensor_fields)) or 1)
-        sensor_vals = {}
-        for si, field_name in enumerate(sensor_fields):
-            default_val = template["sensors"].get(field_name, 0.0)
-            if isinstance(default_val, str):
-                sensor_vals[field_name] = sensor_cols[si % len(sensor_cols)].text_input(
-                    field_name, value=default_val, key=f"reg_s_{field_name}"
-                )
-            else:
-                sensor_vals[field_name] = sensor_cols[si % len(sensor_cols)].number_input(
-                    field_name, value=float(default_val), key=f"reg_s_{field_name}"
-                )
+        hrc1, hrc2, hrc3, hrc4 = st.columns(4)
+        hq_s_in  = hrc1.number_input("Shell Temp In (°C)",  value=120.0, key="hq_sin")
+        hq_s_out = hrc2.number_input("Shell Temp Out (°C)", value=95.0,  key="hq_sout")
+        hq_t_in  = hrc3.number_input("Tube Temp In (°C)",   value=60.0,  key="hq_tin")
+        hq_t_out = hrc4.number_input("Tube Temp Out (°C)",  value=80.0,  key="hq_tout")
 
-        if new_type in ML_COMPATIBLE_TYPES:
-            st.markdown("##### 📉 Degradation Rates (per month)")
-            dc1, dc2, dc3 = st.columns(3)
-            deg_wear  = dc1.number_input("Wear rate (min/mo)",   value=5.0,   step=0.5,  key="reg_deg_wear")
-            deg_rpm   = dc2.number_input("RPM drift (RPM/mo)",   value=-10.0, step=5.0,  key="reg_deg_rpm")
-            deg_torq  = dc3.number_input("Torque drift (Nm/mo)", value=0.5,   step=0.1,  key="reg_deg_torq")
-        else:
-            deg_wear, deg_rpm, deg_torq = 5.0, -10.0, 0.5
+        hfc1, hfc2, hfc3, hfc4 = st.columns(4)
+        hq_sflo  = hfc1.number_input("Shell Flow (kg/s)",   value=10.0, key="hq_sflo")
+        hq_tflo  = hfc2.number_input("Tube Flow (kg/s)",    value=12.0, key="hq_tflo")
+        hq_u_des = hfc3.number_input("Design U (W/m²K)",    value=1000.0, step=50.0, key="hq_udes")
+        hq_area  = hfc4.number_input("Heat Area (m²)",      value=50.0, step=5.0, key="hq_area")
 
-        if new_type == "Heat Exchanger":
-            st.markdown("##### 🔧 HX Design Parameters")
-            hx1, hx2, hx3 = st.columns(3)
-            hx_design_u   = hx1.number_input("Design U (W/m²K)",   value=1000.0, step=50.0, key="reg_hx_u")
-            hx_area        = hx2.number_input("Heat Area (m²)",      value=50.0,  step=5.0,  key="reg_hx_area")
-            hx_fluid_type  = hx3.selectbox("Fluid Type (for fouling limit)",
-                                            list(FOULING_LIMITS.keys()), index=1, key="reg_hx_fluid")
-            sensor_vals["design_U"]    = hx_design_u
-            sensor_vals["heat_area_m2"]= hx_area
-            sensor_vals["fluid_type"]  = hx_fluid_type
+        hq_rf    = st.number_input("Measured Fouling Factor Rf (m²K/W) — enter 0 to auto-calculate", value=0.0, step=0.00005, format="%.6f", key="hq_rf")
+        hq_days  = st.number_input("Days since last cleaning", value=0, step=1, key="hq_days")
 
-        if st.button("✅ Register Asset", key="reg_add_btn", type="primary"):
-            new_asset = template.copy()
-            new_asset["id"]          = new_id.strip() or template["id"]
-            new_asset["description"] = new_desc
-            new_asset["sensors"].update(sensor_vals)
-            new_asset["degradation"].update({
-                "wear_rate_per_month":    deg_wear,
-                "rpm_drift_per_month":    deg_rpm,
-                "torque_drift_per_month": deg_torq,
+        if st.button("Add HX Unit", key="hq_add_btn", type="primary"):
+            auto_id = hq_id.strip() or f"HX-{101 + len(hx_assets)}"
+            new_hx = registry.build_default_asset("Heat Exchanger", auto_id, "")
+            new_hx["description"] = hq_desc
+            new_hx["sensors"].update({
+                "shell_temp_in":   hq_s_in,  "shell_temp_out":  hq_s_out,
+                "tube_temp_in":    hq_t_in,  "tube_temp_out":   hq_t_out,
+                "shell_flow_kg_s": hq_sflo,  "tube_flow_kg_s":  hq_tflo,
+                "design_U":        hq_u_des, "heat_area_m2":    hq_area,
+                "fluid_type":      hq_fluid, "fouling_factor":  hq_rf,
+                "days_since_last_clean": hq_days,
             })
-            assigned_id = registry.add_asset(new_asset)
-            st.success(f"✅ Asset **{assigned_id}** registered successfully!")
+            registry.add_asset(new_hx)
+            st.success(f"✅ {auto_id} added!")
             st.rerun()
 
-        # Edit / Delete existing
-        if registry.count() > 0:
-            st.markdown("---")
-            st.markdown("#### 🗑️ Remove Asset")
-            del_id = st.selectbox("Select asset to delete", [a["id"] for a in registry.get_all()], key="reg_del_sel")
-            if st.button("Delete Selected Asset", key="reg_del_btn"):
-                registry.delete_asset(del_id)
-                st.success(f"Asset {del_id} removed.")
-                st.rerun()
+    hx_assets = registry.get_hx_units()
 
-    # ── Sub-tab: Fleet Overview ─────────────────────────────────
-    with reg_tab_fleet:
-        st.markdown("#### 📋 Registered Assets")
-        all_assets = registry.get_all()
-
-        if not all_assets:
-            st.info("No assets registered yet. Use the **Add / Edit Asset** tab to register machines.")
-        else:
-            # Summary metrics
-            total_assets = len(all_assets)
-            hx_count     = len(registry.get_hx_units())
-            ml_count     = len(registry.get_ml_compatible())
-
-            fm1, fm2, fm3 = st.columns(3)
-            fm1.markdown(custom_metric_card("Total Assets", str(total_assets), "units", "#3b82f6"), unsafe_allow_html=True)
-            fm2.markdown(custom_metric_card("Heat Exchangers", str(hx_count), "units", "#f59e0b"), unsafe_allow_html=True)
-            fm3.markdown(custom_metric_card("ML-Forecast Ready", str(ml_count), "units", "#10b981"), unsafe_allow_html=True)
-
-            # Per-asset cards with TTF
-            st.markdown("---")
-            horizon_fleet = st.slider("Forecast Horizon for All Assets (months)", 3, 24, 12, 1, key="fleet_horizon")
-
-            for asset in all_assets:
-                atype = asset.get("type", "Custom")
-                aid   = asset["id"]
-                aloc  = asset.get("location", "—")
-                adesc = asset.get("description", "")
-                sensors = asset.get("sensors", {})
-                deg     = asset.get("degradation", {})
-
-                with st.expander(f"{'♨️' if atype=='Heat Exchanger' else '⚙️'} {aid} — {atype} | {aloc}", expanded=False):
-                    exp1, exp2 = st.columns([1, 1], gap="medium")
-
-                    with exp1:
-                        st.markdown(f"**Description:** {adesc or '—'}")
-                        st.markdown(f"**Failure Modes:** {', '.join(asset.get('failure_modes', [])[:3])}")
-                        sensor_rows = [f"`{k}` = {v}" for k, v in sensors.items() if not isinstance(v, str)][:6]
-                        st.markdown("**Current Readings:**")
-                        for row in sensor_rows:
-                            st.markdown(f"  • {row}")
-
-                    with exp2:
-                        if atype in ML_COMPATIBLE_TYPES:
-                            # Run TTF for this asset
-                            try:
-                                a_air   = float(sensors.get("air_temp",  300.0))
-                                a_proc  = float(sensors.get("proc_temp", 310.0))
-                                a_rpm   = float(sensors.get("rpm",       1500.0))
-                                a_torq  = float(sensors.get("torque",    38.0))
-                                a_wear  = float(sensors.get("tool_wear", 80.0))
-                                grade   = asset.get("product_grade", "M (Medium)")
-                                a_enc   = TYPE_MAP.get(grade, 1)
-
-                                a_result = run_ttf_forecast(
-                                    xgb_model, scaler,
-                                    a_air, a_proc, a_rpm, a_torq, a_wear,
-                                    a_enc, active_thresh, horizon_fleet, deg
-                                )
-                                afm = a_result.predicted_fail_month
-                                if afm == 0:
-                                    st.markdown('<div class="alert-critical"><h2>🚨 ALREADY CRITICAL</h2></div>', unsafe_allow_html=True)
-                                elif afm is not None:
-                                    st.markdown(f'<div class="alert-warning"><h2>⚠️ Fails: Month {afm}</h2><p style="color:#eee;margin:4px 0 0;">If parameters continue current trend.</p></div>', unsafe_allow_html=True)
-                                else:
-                                    st.markdown(f'<div class="alert-safe"><h2>🟢 Safe for {horizon_fleet} months</h2></div>', unsafe_allow_html=True)
-
-                                # Mini sparkline
-                                fig_mini = go.Figure(go.Scatter(
-                                    x=a_result.months, y=[p*100 for p in a_result.probabilities],
-                                    mode='lines', fill='tozeroy',
-                                    line=dict(color='#3b82f6', width=2),
-                                    fillcolor='rgba(59,130,246,0.15)'
-                                ))
-                                fig_mini.add_hline(y=active_thresh*100, line_dash="dot", line_color="#ef4444")
-                                fig_mini.update_layout(
-                                    paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(17,24,39,0.4)",
-                                    height=160, margin=dict(l=5, r=5, t=5, b=5),
-                                    xaxis=dict(showgrid=False, showticklabels=True, title="Month"),
-                                    yaxis=dict(showgrid=False, title="Risk %", range=[0, 105]),
-                                    font=dict(color="white", size=10),
-                                    showlegend=False,
-                                )
-                                st.plotly_chart(fig_mini, use_container_width=True)
-                            except Exception as e:
-                                st.warning(f"TTF error: {e}")
-                        elif atype == "Heat Exchanger":
-                            st.info("🔄 Use the **Heat Exchanger Specialist** tab for detailed HX analysis.")
-                        else:
-                            st.info(f"⚙️ {atype} — sensor monitoring active. TTF forecasting not applicable for this machine type.")
-
-    # ── Sub-tab: Heat Exchanger Specialist ─────────────────────
-    with reg_tab_hx:
-        st.markdown("#### ♨️ Heat Exchanger Specialist Panel")
-        st.caption("Physics-based fouling analysis using effectiveness-NTU method and LMTD. Identifies which specific HX unit requires cleaning or bypass next.")
-
-        hx_assets = registry.get_hx_units()
-
-        # Allow adding quick HX units
-        with st.expander("➕ Quick-Add Heat Exchanger Unit", expanded=(len(hx_assets) == 0)):
-            st.markdown("**Add a Heat Exchanger unit for analysis:**")
-            hqc1, hqc2, hqc3 = st.columns(3)
-            hq_id    = hqc1.text_input("Unit ID", placeholder="HX-101", key="hq_id")
-            hq_desc  = hqc2.text_input("Description", placeholder="Reactor Feed Preheater", key="hq_desc")
-            hq_fluid = hqc3.selectbox("Shell-side fluid", list(FOULING_LIMITS.keys()), index=1, key="hq_fluid")
-
-            hrc1, hrc2, hrc3, hrc4 = st.columns(4)
-            hq_s_in  = hrc1.number_input("Shell Temp In (°C)",  value=120.0, key="hq_sin")
-            hq_s_out = hrc2.number_input("Shell Temp Out (°C)", value=95.0,  key="hq_sout")
-            hq_t_in  = hrc3.number_input("Tube Temp In (°C)",   value=60.0,  key="hq_tin")
-            hq_t_out = hrc4.number_input("Tube Temp Out (°C)",  value=80.0,  key="hq_tout")
-
-            hfc1, hfc2, hfc3, hfc4 = st.columns(4)
-            hq_sflo  = hfc1.number_input("Shell Flow (kg/s)",   value=10.0, key="hq_sflo")
-            hq_tflo  = hfc2.number_input("Tube Flow (kg/s)",    value=12.0, key="hq_tflo")
-            hq_u_des = hfc3.number_input("Design U (W/m²K)",    value=1000.0, step=50.0, key="hq_udes")
-            hq_area  = hfc4.number_input("Heat Area (m²)",      value=50.0, step=5.0, key="hq_area")
-
-            hq_rf    = st.number_input("Measured Fouling Factor Rf (m²K/W) — enter 0 to auto-calculate", value=0.0, step=0.00005, format="%.6f", key="hq_rf")
-            hq_days  = st.number_input("Days since last cleaning", value=0, step=1, key="hq_days")
-
-            if st.button("Add HX Unit", key="hq_add_btn", type="primary"):
-                auto_id = hq_id.strip() or f"HX-{101 + len(hx_assets)}"
-                new_hx = registry.build_default_asset("Heat Exchanger", auto_id, "")
-                new_hx["description"] = hq_desc
-                new_hx["sensors"].update({
-                    "shell_temp_in":   hq_s_in,  "shell_temp_out":  hq_s_out,
-                    "tube_temp_in":    hq_t_in,  "tube_temp_out":   hq_t_out,
-                    "shell_flow_kg_s": hq_sflo,  "tube_flow_kg_s":  hq_tflo,
-                    "design_U":        hq_u_des, "heat_area_m2":    hq_area,
-                    "fluid_type":      hq_fluid, "fouling_factor":  hq_rf,
-                    "days_since_last_clean": hq_days,
-                })
-                registry.add_asset(new_hx)
-                st.success(f"✅ {auto_id} added!")
-                st.rerun()
-
-        hx_assets = registry.get_hx_units()
-
-        if not hx_assets:
-            st.info("No heat exchangers registered yet. Add units using the panel above.")
-        else:
-            # Build HXUnit objects
-            hx_units = []
-            for ha in hx_assets:
-                s = ha.get("sensors", {})
-                hxu = HXUnit(
-                    unit_id=ha["id"],
-                    description=ha.get("description", ""),
-                    fluid_type=str(s.get("fluid_type", "process_liquid")),
-                    shell_temp_in=float(s.get("shell_temp_in", 120)),
-                    shell_temp_out=float(s.get("shell_temp_out", 95)),
-                    shell_flow_kg_s=float(s.get("shell_flow_kg_s", 10)),
-                    tube_temp_in=float(s.get("tube_temp_in", 60)),
-                    tube_temp_out=float(s.get("tube_temp_out", 80)),
-                    tube_flow_kg_s=float(s.get("tube_flow_kg_s", 12)),
-                    design_U=float(s.get("design_U", 1000)),
-                    heat_area_m2=float(s.get("heat_area_m2", 50)),
-                    fouling_factor=float(s.get("fouling_factor", 0)),
-                    days_since_last_clean=int(s.get("days_since_last_clean", 0)),
-                )
-                hx_units.append(hxu)
-
-            report = analyze_hx_fleet(hx_units)
-
-            # Fleet verdict
-            if report.most_critical:
-                risk = report.most_critical.risk_level
-                if risk == "CRITICAL":
-                    st.markdown(f'<div class="alert-critical"><h2>🔴 HX FLEET: CRITICAL ALERT</h2><p style="color:#eee">{report.summary_message}</p></div>', unsafe_allow_html=True)
-                elif risk == "WARNING":
-                    st.markdown(f'<div class="alert-warning"><h2>⚠️ HX FLEET: WARNING</h2><p style="color:#eee">{report.summary_message}</p></div>', unsafe_allow_html=True)
-                else:
-                    st.markdown(f'<div class="alert-safe"><h2>🟢 HX FLEET: ALL HEALTHY</h2><p style="color:#eee">{report.summary_message}</p></div>', unsafe_allow_html=True)
-
-            # Ranked unit table
-            st.markdown('<div class="section-header">🏆 Unit Ranking — Most Critical First</div>', unsafe_allow_html=True)
-
-            rank_data = []
-            for rk, u in enumerate(report.ranked, 1):
-                icon = "🔴" if u.risk_level == "CRITICAL" else ("🟡" if u.risk_level == "WARNING" else "🟢")
-                dtc_str = f"{int(u.days_to_critical)} days" if u.days_to_critical is not None else "—"
-                rank_data.append({
-                    "Rank": rk,
-                    "Unit": u.unit_id,
-                    "Description": u.description or "—",
-                    "Status": f"{icon} {u.risk_level}",
-                    "Health Score": f"{u.health_score:.1f} / 100",
-                    "Fouling %": f"{u.fouling_pct:.1f}%",
-                    "Effectiveness": f"{u.eff_ratio*100:.1f}% of design",
-                    "Temp Pinch (°C)": u.temperature_pinch,
-                    "Days to Limit": dtc_str,
-                    "Heat Duty (kW)": u.heat_duty_kw,
-                })
-            st.dataframe(pd.DataFrame(rank_data), use_container_width=True, height=300)
-
-            # Per-unit detail cards
-            st.markdown('<div class="section-header">🔍 Unit-by-Unit Detailed Diagnostics</div>', unsafe_allow_html=True)
-            for u in report.ranked:
-                risk_color = {"CRITICAL": "#ef4444", "WARNING": "#f59e0b", "SAFE": "#10b981"}[u.risk_level]
-                with st.expander(f"{u.unit_id} — {u.risk_level} | Health: {u.health_score:.1f}/100 | Fouling: {u.fouling_pct:.1f}%", expanded=(u.risk_level == "CRITICAL")):
-                    hd1, hd2, hd3, hd4 = st.columns(4)
-                    hd1.markdown(custom_metric_card("Health Score",   f"{u.health_score:.1f}", "/ 100",           risk_color), unsafe_allow_html=True)
-                    hd2.markdown(custom_metric_card("Fouling Used",   f"{u.fouling_pct:.1f}",  "% of TEMA limit", risk_color), unsafe_allow_html=True)
-                    hd3.markdown(custom_metric_card("Effectiveness",  f"{u.eff_ratio*100:.1f}","% of design",     "#3b82f6"), unsafe_allow_html=True)
-                    hd4.markdown(custom_metric_card("Temp Pinch",     f"{u.temperature_pinch}","°C",               "#8b5cf6"), unsafe_allow_html=True)
-
-                    hm1, hm2 = st.columns(2)
-                    hm1.markdown(custom_metric_card("Heat Duty",      f"{u.heat_duty_kw:.1f}", "kW",   "#14b8a6"), unsafe_allow_html=True)
-                    hm2.markdown(custom_metric_card("LMTD",           f"{u.lmtd:.2f}",          "°C",   "#0284c7"), unsafe_allow_html=True)
-
-                    st.markdown("**Diagnostic Messages:**")
-                    for d in u.diagnostics:
-                        st.markdown(f'<div class="insight-box">{d}</div>', unsafe_allow_html=True)
-
-                    # Fouling progress bar
-                    fouling_bar_color = risk_color
-                    fouling_pct_capped = min(100, u.fouling_pct)
-                    st.markdown(f"""
-                    <div style="margin:12px 0 4px; color:#94a3b8; font-size:0.8rem; text-transform:uppercase; letter-spacing:1px;">Fouling Progress to TEMA Limit</div>
-                    <div style="background:rgba(255,255,255,0.05); border-radius:8px; height:20px; width:100%; overflow:hidden;">
-                        <div style="background:{fouling_bar_color}; height:100%; width:{fouling_pct_capped:.1f}%;
-                                    border-radius:8px; transition:width 0.5s ease;
-                                    box-shadow:0 0 8px {fouling_bar_color}88;"></div>
-                    </div>
-                    <div style="color:#64748b; font-size:0.75rem; margin-top:4px;">{u.fouling_pct:.1f}% — Limit: {u.fouling_limit:.2e} m²K/W | Current: {u.fouling_calc:.2e} m²K/W</div>
-                    """, unsafe_allow_html=True)
-
-            # HX Comparison Chart
-            st.markdown('<div class="section-header">📊 Fleet Comparison — Fouling & Effectiveness</div>', unsafe_allow_html=True)
-            hx_chart_df = pd.DataFrame([
-                {"Unit": u.unit_id, "Fouling %": u.fouling_pct, "Effectiveness %": u.eff_ratio*100, "Risk": u.risk_level}
-                for u in report.ranked
-            ])
-            color_map = {"CRITICAL": "#ef4444", "WARNING": "#f59e0b", "SAFE": "#10b981"}
-            fig_hx = go.Figure()
-            for _, row in hx_chart_df.iterrows():
-                fig_hx.add_trace(go.Bar(
-                    x=[row["Unit"]], y=[row["Fouling %"]],
-                    name=row["Unit"],
-                    marker_color=color_map.get(row["Risk"], "#3b82f6"),
-                    showlegend=False,
-                ))
-            fig_hx.add_hline(y=100, line_dash="dot", line_color="#ef4444",
-                             annotation_text="TEMA Fouling Limit", annotation_position="top right")
-            fig_hx.add_hline(y=60, line_dash="dash", line_color="#f59e0b",
-                             annotation_text="Warning Threshold (60%)", annotation_position="top left")
-            fig_hx.update_layout(
-                title="Fouling % of TEMA Limit per HX Unit",
-                paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(17,24,39,0.5)",
-                font_color="white", height=320,
-                yaxis=dict(range=[0, 120], title="Fouling % of TEMA Limit"),
-                xaxis_title="Heat Exchanger Unit",
-                margin=dict(l=10, r=10, t=40, b=10),
+    if not hx_assets:
+        st.info("No heat exchangers registered yet. Add units using the panel above.")
+    else:
+        # Build HXUnit objects
+        hx_units = []
+        for ha in hx_assets:
+            s = ha.get("sensors", {})
+            hxu = HXUnit(
+                unit_id=ha["id"],
+                description=ha.get("description", ""),
+                fluid_type=str(s.get("fluid_type", "process_liquid")),
+                shell_temp_in=float(s.get("shell_temp_in", 120)),
+                shell_temp_out=float(s.get("shell_temp_out", 95)),
+                shell_flow_kg_s=float(s.get("shell_flow_kg_s", 10)),
+                tube_temp_in=float(s.get("tube_temp_in", 60)),
+                tube_temp_out=float(s.get("tube_temp_out", 80)),
+                tube_flow_kg_s=float(s.get("tube_flow_kg_s", 12)),
+                design_U=float(s.get("design_U", 1000)),
+                heat_area_m2=float(s.get("heat_area_m2", 50)),
+                fouling_factor=float(s.get("fouling_factor", 0)),
+                days_since_last_clean=int(s.get("days_since_last_clean", 0)),
             )
-            st.plotly_chart(fig_hx, use_container_width=True)
+            hx_units.append(hxu)
+
+        report = analyze_hx_fleet(hx_units)
+
+        # Fleet verdict
+        if report.most_critical:
+            risk = report.most_critical.risk_level
+            if risk == "CRITICAL":
+                st.markdown(f'<div class="alert-critical"><h2>🔴 HX FLEET: CRITICAL ALERT</h2><p style="color:#eee">{report.summary_message}</p></div>', unsafe_allow_html=True)
+            elif risk == "WARNING":
+                st.markdown(f'<div class="alert-warning"><h2>⚠️ HX FLEET: WARNING</h2><p style="color:#eee">{report.summary_message}</p></div>', unsafe_allow_html=True)
+            else:
+                st.markdown(f'<div class="alert-safe"><h2>🟢 HX FLEET: ALL HEALTHY</h2><p style="color:#eee">{report.summary_message}</p></div>', unsafe_allow_html=True)
+
+        # Ranked unit table
+        st.markdown('<div class="section-header">🏆 Unit Ranking — Most Critical First</div>', unsafe_allow_html=True)
+
+        rank_data = []
+        for rk, u in enumerate(report.ranked, 1):
+            icon = "🔴" if u.risk_level == "CRITICAL" else ("🟡" if u.risk_level == "WARNING" else "🟢")
+            dtc_str = f"{int(u.days_to_critical)} days" if u.days_to_critical is not None else "—"
+            rank_data.append({
+                "Rank": rk,
+                "Unit": u.unit_id,
+                "Description": u.description or "—",
+                "Status": f"{icon} {u.risk_level}",
+                "Health Score": f"{u.health_score:.1f} / 100",
+                "Fouling %": f"{u.fouling_pct:.1f}%",
+                "Effectiveness": f"{u.eff_ratio*100:.1f}% of design",
+                "Temp Pinch (°C)": u.temperature_pinch,
+                "Days to Limit": dtc_str,
+                "Heat Duty (kW)": u.heat_duty_kw,
+            })
+        st.dataframe(pd.DataFrame(rank_data), use_container_width=True, height=300)
+
+        # Per-unit detail cards
+        st.markdown('<div class="section-header">🔍 Unit-by-Unit Detailed Diagnostics</div>', unsafe_allow_html=True)
+        for u in report.ranked:
+            risk_color = {"CRITICAL": "#ef4444", "WARNING": "#f59e0b", "SAFE": "#10b981"}[u.risk_level]
+            with st.expander(f"{u.unit_id} — {u.risk_level} | Health: {u.health_score:.1f}/100 | Fouling: {u.fouling_pct:.1f}%", expanded=(u.risk_level == "CRITICAL")):
+                hd1, hd2, hd3, hd4 = st.columns(4)
+                hd1.markdown(custom_metric_card("Health Score",   f"{u.health_score:.1f}", "/ 100",           risk_color), unsafe_allow_html=True)
+                hd2.markdown(custom_metric_card("Fouling Used",   f"{u.fouling_pct:.1f}",  "% of TEMA limit", risk_color), unsafe_allow_html=True)
+                hd3.markdown(custom_metric_card("Effectiveness",  f"{u.eff_ratio*100:.1f}","% of design",     "#3b82f6"), unsafe_allow_html=True)
+                hd4.markdown(custom_metric_card("Temp Pinch",     f"{u.temperature_pinch}","°C",               "#8b5cf6"), unsafe_allow_html=True)
+
+                hm1, hm2 = st.columns(2)
+                hm1.markdown(custom_metric_card("Heat Duty",      f"{u.heat_duty_kw:.1f}", "kW",   "#14b8a6"), unsafe_allow_html=True)
+                hm2.markdown(custom_metric_card("LMTD",           f"{u.lmtd:.2f}",          "°C",   "#0284c7"), unsafe_allow_html=True)
+
+                st.markdown("**Diagnostic Messages:**")
+                for d in u.diagnostics:
+                    st.markdown(f'<div class="insight-box">{d}</div>', unsafe_allow_html=True)
+
+                # Fouling progress bar
+                fouling_bar_color = risk_color
+                fouling_pct_capped = min(100, u.fouling_pct)
+                st.markdown(f"""
+                <div style="margin:12px 0 4px; color:#94a3b8; font-size:0.8rem; text-transform:uppercase; letter-spacing:1px;">Fouling Progress to TEMA Limit</div>
+                <div style="background:rgba(255,255,255,0.05); border-radius:8px; height:20px; width:100%; overflow:hidden;">
+                    <div style="background:{fouling_bar_color}; height:100%; width:{fouling_pct_capped:.1f}%;
+                                border-radius:8px; transition:width 0.5s ease;
+                                box-shadow:0 0 8px {fouling_bar_color}88;"></div>
+                </div>
+                <div style="color:#64748b; font-size:0.75rem; margin-top:4px;">{u.fouling_pct:.1f}% — Limit: {u.fouling_limit:.2e} m²K/W | Current: {u.fouling_calc:.2e} m²K/W</div>
+                """, unsafe_allow_html=True)
+
+        # HX Comparison Chart
+        st.markdown('<div class="section-header">📊 Fleet Comparison — Fouling & Effectiveness</div>', unsafe_allow_html=True)
+        hx_chart_df = pd.DataFrame([
+            {"Unit": u.unit_id, "Fouling %": u.fouling_pct, "Effectiveness %": u.eff_ratio*100, "Risk": u.risk_level}
+            for u in report.ranked
+        ])
+        color_map = {"CRITICAL": "#ef4444", "WARNING": "#f59e0b", "SAFE": "#10b981"}
+        fig_hx = go.Figure()
+        for _, row in hx_chart_df.iterrows():
+            fig_hx.add_trace(go.Bar(
+                x=[row["Unit"]], y=[row["Fouling %"]],
+                name=row["Unit"],
+                marker_color=color_map.get(row["Risk"], "#3b82f6"),
+                showlegend=False,
+            ))
+        fig_hx.add_hline(y=100, line_dash="dot", line_color="#ef4444",
+                         annotation_text="TEMA Fouling Limit", annotation_position="top right")
+        fig_hx.add_hline(y=60, line_dash="dash", line_color="#f59e0b",
+                         annotation_text="Warning Threshold (60%)", annotation_position="top left")
+        fig_hx.update_layout(
+            title="Fouling % of TEMA Limit per HX Unit",
+            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(17,24,39,0.5)",
+            font_color="white", height=320,
+            yaxis=dict(range=[0, 120], title="Fouling % of TEMA Limit"),
+            xaxis_title="Heat Exchanger Unit",
+            margin=dict(l=10, r=10, t=40, b=10),
+        )
+        st.plotly_chart(fig_hx, use_container_width=True)
