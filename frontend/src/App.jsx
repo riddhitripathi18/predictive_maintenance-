@@ -45,6 +45,22 @@ export default function App() {
   // ── TAB 5: HEAT EXCHANGERS STATES ───────────────────────────
   const [exchangers, setExchangers] = useState([]);
   const [hxLoading, setHxLoading] = useState(false);
+  const [showHxAdd, setShowHxAdd] = useState(false);
+  const [newHx, setNewHx] = useState({
+    id: '',
+    description: 'Reactor Feed Preheater',
+    fluid_type: 'process_liquid',
+    shell_temp_in: 120.0,
+    shell_temp_out: 95.0,
+    shell_flow_kg_s: 10.0,
+    tube_temp_in: 60.0,
+    tube_temp_out: 80.0,
+    tube_flow_kg_s: 12.0,
+    design_U: 1000.0,
+    heat_area_m2: 50.0,
+    fouling_factor: 0.0,
+    days_since_last_clean: 0
+  });
 
   // ─────────────────────────────────────────────
   // LOAD INITIAL CONFIG & THRESHOLDS
@@ -113,6 +129,79 @@ export default function App() {
         console.error("Error loading exchangers:", err);
         setHxLoading(false);
       });
+  };
+
+  const handleAddHx = (e) => {
+    e.preventDefault();
+    const hxId = newHx.id.trim() || `HX-${101 + exchangers.length}`;
+    const assetPayload = {
+      id: hxId,
+      type: "Heat Exchanger",
+      location: "Facility",
+      description: newHx.description || "Custom Heat Exchanger",
+      product_grade: "M (Medium)",
+      sensors: {
+        shell_temp_in: parseFloat(newHx.shell_temp_in),
+        shell_temp_out: parseFloat(newHx.shell_temp_out),
+        tube_temp_in: parseFloat(newHx.tube_temp_in),
+        tube_temp_out: parseFloat(newHx.tube_temp_out),
+        shell_flow_kg_s: parseFloat(newHx.shell_flow_kg_s),
+        tube_flow_kg_s: parseFloat(newHx.tube_flow_kg_s),
+        design_U: parseFloat(newHx.design_U),
+        heat_area_m2: parseFloat(newHx.heat_area_m2),
+        fluid_type: newHx.fluid_type,
+        fouling_factor: parseFloat(newHx.fouling_factor),
+        days_since_last_clean: parseInt(newHx.days_since_last_clean)
+      },
+      degradation: {
+        wear_rate_per_month: 5.0,
+        rpm_drift_per_month: -10.0,
+        torque_drift_per_month: 0.5,
+        air_temp_drift_per_month: 0.05,
+        proc_temp_drift_per_month: 0.1
+      },
+      failure_modes: [
+        "Tube Fouling",
+        "Shell Fouling",
+        "Tube Leak",
+        "Tube Vibration",
+        "Bypass Failure"
+      ]
+    };
+
+    fetch(`${API_BASE}/assets`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(assetPayload)
+    })
+    .then(() => {
+      setShowHxAdd(false);
+      loadExchangers();
+      setNewHx({
+        id: '',
+        description: 'Reactor Feed Preheater',
+        fluid_type: 'process_liquid',
+        shell_temp_in: 120.0,
+        shell_temp_out: 95.0,
+        shell_flow_kg_s: 10.0,
+        tube_temp_in: 60.0,
+        tube_temp_out: 80.0,
+        tube_flow_kg_s: 12.0,
+        design_U: 1000.0,
+        heat_area_m2: 50.0,
+        fouling_factor: 0.0,
+        days_since_last_clean: 0
+      });
+    })
+    .catch(err => console.error("Error adding heat exchanger:", err));
+  };
+
+  const handleDeleteHx = (id) => {
+    if (window.confirm(`Delete heat exchanger ${id}?`)) {
+      fetch(`${API_BASE}/assets/${id}`, { method: 'DELETE' })
+        .then(() => loadExchangers())
+        .catch(err => console.error("Error deleting heat exchanger:", err));
+    }
   };
 
   useEffect(() => {
@@ -710,18 +799,114 @@ export default function App() {
           <div>
             <div className="card-title-flex">
               <div className="section-header" style={{ margin: 0 }}>🌡️ Heat Exchanger Performance Fleet Rankings</div>
-              <button className="btn btn-primary" onClick={loadExchangers} disabled={hxLoading}>
-                <RefreshCw size={14} style={{ animation: hxLoading ? 'spin 1.5s infinite linear' : 'none' }} /> Refresh Fleet Stats
-              </button>
+              <div style={{ display: 'flex', gap: '12px' }}>
+                <button className="btn btn-primary" onClick={() => setShowHxAdd(!showHxAdd)}>
+                  {showHxAdd ? "Close Form" : "➕ Register HX Unit"}
+                </button>
+                <button className="btn" onClick={loadExchangers} disabled={hxLoading}>
+                  <RefreshCw size={14} style={{ animation: hxLoading ? 'spin 1.5s infinite linear' : 'none' }} /> Refresh Fleet Stats
+                </button>
+              </div>
             </div>
+
+            {showHxAdd && (
+              <div className="glass-card" style={{ marginTop: '20px', border: '1px solid var(--color-primary)' }}>
+                <h4 style={{ marginTop: 0 }}>Register New Heat Exchanger Unit</h4>
+                <form onSubmit={handleAddHx}>
+                  <div className="grid-3" style={{ gap: '16px', marginBottom: '16px' }}>
+                    <div className="form-group">
+                      <label>Unit ID (e.g. HX-101)</label>
+                      <input type="text" className="form-input" placeholder="Leave empty for auto-id" value={newHx.id} onChange={(e) => setNewHx({...newHx, id: e.target.value})} />
+                    </div>
+                    <div className="form-group">
+                      <label>Description</label>
+                      <input type="text" className="form-input" placeholder="e.g. Condenser Loop" value={newHx.description} onChange={(e) => setNewHx({...newHx, description: e.target.value})} />
+                    </div>
+                    <div className="form-group">
+                      <label>Fluid Type</label>
+                      <select className="form-select" value={newHx.fluid_type} onChange={(e) => setNewHx({...newHx, fluid_type: e.target.value})}>
+                        <option value="cooling_water">cooling_water</option>
+                        <option value="process_liquid">process_liquid</option>
+                        <option value="crude_oil">crude_oil</option>
+                        <option value="steam">steam</option>
+                        <option value="refrigerant">refrigerant</option>
+                        <option value="custom">custom</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <h5 style={{ margin: '16px 0 8px', color: '#fff', fontSize: '0.9rem' }}>Shell-Side Fluid Parameters</h5>
+                  <div className="grid-3" style={{ gap: '16px', marginBottom: '16px' }}>
+                    <div className="form-group">
+                      <label>Inlet Temperature (°C)</label>
+                      <input type="number" className="form-input" step="0.1" value={newHx.shell_temp_in} onChange={(e) => setNewHx({...newHx, shell_temp_in: parseFloat(e.target.value) || 0})} />
+                    </div>
+                    <div className="form-group">
+                      <label>Outlet Temperature (°C)</label>
+                      <input type="number" className="form-input" step="0.1" value={newHx.shell_temp_out} onChange={(e) => setNewHx({...newHx, shell_temp_out: parseFloat(e.target.value) || 0})} />
+                    </div>
+                    <div className="form-group">
+                      <label>Flow Rate (kg/s)</label>
+                      <input type="number" className="form-input" step="0.1" value={newHx.shell_flow_kg_s} onChange={(e) => setNewHx({...newHx, shell_flow_kg_s: parseFloat(e.target.value) || 0})} />
+                    </div>
+                  </div>
+
+                  <h5 style={{ margin: '16px 0 8px', color: '#fff', fontSize: '0.9rem' }}>Tube-Side Fluid Parameters</h5>
+                  <div className="grid-3" style={{ gap: '16px', marginBottom: '16px' }}>
+                    <div className="form-group">
+                      <label>Inlet Temperature (°C)</label>
+                      <input type="number" className="form-input" step="0.1" value={newHx.tube_temp_in} onChange={(e) => setNewHx({...newHx, tube_temp_in: parseFloat(e.target.value) || 0})} />
+                    </div>
+                    <div className="form-group">
+                      <label>Outlet Temperature (°C)</label>
+                      <input type="number" className="form-input" step="0.1" value={newHx.tube_temp_out} onChange={(e) => setNewHx({...newHx, tube_temp_out: parseFloat(e.target.value) || 0})} />
+                    </div>
+                    <div className="form-group">
+                      <label>Flow Rate (kg/s)</label>
+                      <input type="number" className="form-input" step="0.1" value={newHx.tube_flow_kg_s} onChange={(e) => setNewHx({...newHx, tube_flow_kg_s: parseFloat(e.target.value) || 0})} />
+                    </div>
+                  </div>
+
+                  <h5 style={{ margin: '16px 0 8px', color: '#fff', fontSize: '0.9rem' }}>Design & State Constants</h5>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '16px', marginBottom: '16px' }}>
+                    <div className="form-group">
+                      <label>Design U (W/m²K)</label>
+                      <input type="number" className="form-input" step="10" value={newHx.design_U} onChange={(e) => setNewHx({...newHx, design_U: parseFloat(e.target.value) || 0})} />
+                    </div>
+                    <div className="form-group">
+                      <label>Heat Area (m²)</label>
+                      <input type="number" className="form-input" step="1" value={newHx.heat_area_m2} onChange={(e) => setNewHx({...newHx, heat_area_m2: parseFloat(e.target.value) || 0})} />
+                    </div>
+                    <div className="form-group">
+                      <label>Fouling Rf (0 = auto)</label>
+                      <input type="number" className="form-input" step="0.00001" value={newHx.fouling_factor} onChange={(e) => setNewHx({...newHx, fouling_factor: parseFloat(e.target.value) || 0})} />
+                    </div>
+                    <div className="form-group">
+                      <label>Days Since Clean</label>
+                      <input type="number" className="form-input" step="1" value={newHx.days_since_last_clean} onChange={(e) => setNewHx({...newHx, days_since_last_clean: parseInt(e.target.value) || 0})} />
+                    </div>
+                  </div>
+
+                  <div style={{ marginTop: '20px', display: 'flex', gap: '10px' }}>
+                    <button type="submit" className="btn btn-primary">Save Exchanger Stats</button>
+                    <button type="button" className="btn" onClick={() => setShowHxAdd(false)}>Cancel</button>
+                  </div>
+                </form>
+              </div>
+            )}
 
             <div className="grid-2" style={{ marginTop: '20px' }}>
               {exchangers.map((hx) => (
                 <div key={hx.id} className="glass-card" style={{ borderTop: `4px solid ${hx.status_color}`, display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
                   <div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', marginBottom: '14px' }}>
+                    <div style={{ display: 'flex', justifyItems: 'space-between', justifyContent: 'space-between', alignItems: 'start', marginBottom: '14px' }}>
                       <div>
-                        <h4 style={{ margin: 0, border: 'none', padding: 0 }}>{hx.id}</h4>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <h4 style={{ margin: 0, border: 'none', padding: 0 }}>{hx.id}</h4>
+                          <button style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: '#ef4444', padding: '2px', display: 'flex', alignItems: 'center' }} onClick={() => handleDeleteHx(hx.id)}>
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
                         <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{hx.description}</span>
                       </div>
                       <span className={`status-pill ${hx.status_label.toLowerCase()}`}>{hx.status_label}</span>
