@@ -316,7 +316,7 @@ async def batch_process(file: UploadFile = File(...), active_thresh: float = For
     df["Failure Probability (%)"] = (proba * 100).round(2)
     df["Predicted Failure"]       = (proba >= active_thresh).astype(int)
     df["Risk Level"] = df["Failure Probability (%)"].apply(
-        lambda p: "🔴 CRITICAL" if p >= 65 else ("🟡 WARNING" if p >= 35 else "🟢 SAFE")
+        lambda p: "🔴 CRITICAL" if p > 70 else ("🟡 WARNING" if p >= 35 else "🟢 SAFE")
     )
     
     total = len(df)

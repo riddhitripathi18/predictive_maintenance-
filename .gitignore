@@ -7,3 +7,6 @@ __pycache__/
 .gemini/
 .DS_Store
 Thumbs.db
+scratch/
+node_modules/
+dist/

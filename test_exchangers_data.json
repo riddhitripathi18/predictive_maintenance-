@@ -1,0 +1,47 @@
+[
+  {
+    "id": "HX-103-SAFE",
+    "description": "Clean Condenser Loop",
+    "fluid_type": "cooling_water",
+    "shell_temp_in": 115.0,
+    "shell_temp_out": 90.0,
+    "tube_temp_in": 25.0,
+    "tube_temp_out": 45.0,
+    "shell_flow_kg_s": 15.0,
+    "tube_flow_kg_s": 20.0,
+    "design_U": 1200.0,
+    "heat_area_m2": 60.0,
+    "days_since_last_clean": 5,
+    "expected_status": "SAFE"
+  },
+  {
+    "id": "HX-104-WARNING",
+    "description": "Fouling Reboiler Exchanger",
+    "fluid_type": "process_liquid",
+    "shell_temp_in": 130.0,
+    "shell_temp_out": 110.0,
+    "tube_temp_in": 60.0,
+    "tube_temp_out": 76.0,
+    "shell_flow_kg_s": 8.0,
+    "tube_flow_kg_s": 10.0,
+    "design_U": 850.0,
+    "heat_area_m2": 45.0,
+    "days_since_last_clean": 110,
+    "expected_status": "WARNING"
+  },
+  {
+    "id": "HX-105-CRITICAL",
+    "description": "Severely Fouled Process Reboiler",
+    "fluid_type": "process_liquid",
+    "shell_temp_in": 140.0,
+    "shell_temp_out": 128.0,
+    "tube_temp_in": 60.0,
+    "tube_temp_out": 68.0,
+    "shell_flow_kg_s": 6.0,
+    "tube_flow_kg_s": 8.0,
+    "design_U": 1000.0,
+    "heat_area_m2": 50.0,
+    "days_since_last_clean": 220,
+    "expected_status": "CRITICAL"
+  }
+]

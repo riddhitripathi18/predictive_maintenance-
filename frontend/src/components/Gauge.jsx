@@ -1,7 +1,7 @@
 import React from 'react';
 
 const getRisk = (prob) => {
-  if (prob >= 0.65) return { color: '#ef4444', label: 'CRITICAL' };
+  if (prob > 0.70) return { color: '#ef4444', label: 'CRITICAL' };
   if (prob >= 0.35) return { color: '#f59e0b', label: 'WARNING' };
   return { color: '#10b981', label: 'SAFE' };
 };

@@ -249,7 +249,7 @@ def engineer_features(air_temp, proc_temp, rpm, torque, tool_wear, type_enc):
             temp_delta, power_W, torque_x_wear, wear_pct, high_torque, high_wear]
 
 def get_risk(prob):
-    if prob >= 0.65:   return "#ef4444", "CRITICAL", "🔴"
+    if prob > 0.70:    return "#ef4444", "CRITICAL", "🔴"
     elif prob >= 0.35: return "#f59e0b", "WARNING",  "🟡"
     else:              return "#10b981", "SAFE",      "🟢"
 
@@ -369,7 +369,7 @@ def prepare_batch(df_raw):
     df["Failure Probability (%)"] = (proba * 100).round(2)
     df["Predicted Failure"]       = (proba >= active_thresh).astype(int)
     df["Risk Level"] = df["Failure Probability (%)"].apply(
-        lambda p: "🔴 CRITICAL" if p >= 65 else ("🟡 WARNING" if p >= 35 else "🟢 SAFE")
+        lambda p: "🔴 CRITICAL" if p > 70 else ("🟡 WARNING" if p >= 35 else "🟢 SAFE")
     )
     return df, None
 
@@ -745,7 +745,7 @@ with tab2:
             # Calibrate threshold predictions
             result_df["Predicted Failure"] = (result_df["Failure Probability (%)"] >= (active_thresh * 100)).astype(int)
             result_df["Risk Level"] = result_df["Failure Probability (%)"].apply(
-                lambda p: "🔴 CRITICAL" if p >= 65 else ("🟡 WARNING" if p >= 35 else "🟢 SAFE")
+                lambda p: "🔴 CRITICAL" if p > 70 else ("🟡 WARNING" if p >= 35 else "🟢 SAFE")
             )
             
             total      = len(result_df)

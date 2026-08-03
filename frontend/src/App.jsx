@@ -1,3 +1,4 @@
+// v-fix-2 — risk stats recomputed client-side from probability records
 import React, { useState, useEffect, useRef } from 'react';
 import { 
   Activity, Clock, Database, FileText, Settings2, Shield, 
@@ -10,7 +11,7 @@ import {
 } from 'recharts';
 import Gauge from './components/Gauge';
 
-const API_BASE = 'http://localhost:8000/api';
+const API_BASE = '/api';
 
 const TYPE_MAP = {
   "L (Low)": "L",
@@ -24,6 +25,8 @@ export default function App() {
   const [opMode, setOpMode] = useState('Balanced');
   const [config, setConfig] = useState(null);
   const [activeThresh, setActiveThresh] = useState(0.35);
+  const [apiError, setApiError] = useState(null);
+  const [simLoading, setSimLoading] = useState(true);
 
   // ── TAB 1: SIMULATOR STATES ─────────────────────────────────
   const [simType, setSimType] = useState('L (Low)');
@@ -46,14 +49,21 @@ export default function App() {
   // ─────────────────────────────────────────────
   useEffect(() => {
     fetch(`${API_BASE}/config`)
-      .then(res => res.json())
+      .then(res => {
+        if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
+        return res.json();
+      })
       .then(data => {
         setConfig(data);
         if (data.models_loaded) {
           setActiveThresh(data.thresholds.xgb_f1);
         }
+        setApiError(null);
       })
-      .catch(err => console.error("Error loading config:", err));
+      .catch(err => {
+        console.error("Error loading config:", err);
+        setApiError("Could not connect to FastAPI backend API. Please make sure the backend is running (run: python main.py).");
+      });
   }, []);
 
   // Sync threshold with operational mode preset
@@ -70,6 +80,7 @@ export default function App() {
   // RUN SIMULATOR inference
   // ─────────────────────────────────────────────
   useEffect(() => {
+    setSimLoading(true);
     const timer = setTimeout(() => {
       fetch(`${API_BASE}/simulate`, {
         method: 'POST',
@@ -84,9 +95,20 @@ export default function App() {
           active_thresh: activeThresh
         })
       })
-      .then(res => res.json())
-      .then(data => setSimResult(data))
-      .catch(err => console.error("Error running simulation:", err));
+      .then(res => {
+        if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
+        return res.json();
+      })
+      .then(data => {
+        setSimResult(data);
+        setSimLoading(false);
+        setApiError(null);
+      })
+      .catch(err => {
+        console.error("Error running simulation:", err);
+        setSimLoading(false);
+        setApiError("Could not connect to FastAPI backend API. Please make sure the backend is running (run: python main.py).");
+      });
     }, 250); // debounce API calls
     return () => clearTimeout(timer);
   }, [simAir, simProc, simRpm, simTorque, simWear, simType, activeThresh]);
@@ -105,6 +127,19 @@ export default function App() {
     processBatchFile(file);
   };
 
+  // Recompute risk counts from raw probability records (client-side truth)
+  const computeStatsFromRecords = (records, alarmThresh) => {
+    let critical = 0, warning = 0, safe = 0, alarms = 0;
+    records.forEach(r => {
+      const p = r["Failure Probability (%)"];
+      if (p > 70)       critical++;
+      else if (p >= 35) warning++;
+      else              safe++;
+      if (r["Predicted Failure"] === 1) alarms++;
+    });
+    return { total: records.length, critical, warning, safe, alarms };
+  };
+
   const processBatchFile = (file) => {
     setBatchLoading(true);
     const formData = new FormData();
@@ -117,6 +152,10 @@ export default function App() {
     })
     .then(res => res.json())
     .then(data => {
+      // Override backend stats with client-side recomputed values
+      if (data.records && data.records.length > 0) {
+        data.stats = computeStatsFromRecords(data.records, activeThresh);
+      }
       setBatchData(data);
       setBatchLoading(false);
     })
@@ -215,7 +254,7 @@ export default function App() {
       <div className="main-content">
         <header className="app-header">
           <div className="header-title">
-            <h1>🏭 predictive_maint_system_v3.0</h1>
+            <h1>🏭 predictive maint system v3.0</h1>
             <p>
               <span className="pulse-indicator"></span> 
               STATUS: ONLINE &nbsp;|&nbsp; 
@@ -237,10 +276,71 @@ export default function App() {
           
         </div>
 
+        {/* Connection Error Message */}
+        {apiError && (
+          <div className="glass-card" style={{ borderLeft: '4px solid var(--color-critical)', padding: '24px', margin: '20px 0' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '14px' }}>
+              <AlertTriangle size={32} color="var(--color-critical)" />
+              <h3 style={{ color: '#fff', fontSize: '1.4rem' }}>Connection Error</h3>
+            </div>
+            <p style={{ color: 'var(--text-main)', fontSize: '1rem', marginBottom: '16px', lineHeight: '1.5' }}>
+              {apiError}
+            </p>
+            <div style={{ background: 'rgba(0,0,0,0.2)', padding: '12px', borderRadius: '6px', fontSize: '0.85rem', fontFamily: 'monospace' }}>
+              <strong>Troubleshooting tips:</strong>
+              <ul style={{ paddingLeft: '20px', marginTop: '6px' }}>
+                <li>Confirm that the FastAPI server is running by typing <code>python main.py</code> in the terminal.</li>
+                <li>Make sure the backend port <code>8000</code> is open and reachable.</li>
+                <li>Check the console logs of the browser or backend for any specific runtime exceptions.</li>
+              </ul>
+            </div>
+            <button 
+              className="tab-button active" 
+              style={{ marginTop: '20px', padding: '8px 20px', cursor: 'pointer', display: 'flex', gap: '6px', alignItems: 'center' }} 
+              onClick={() => {
+                setApiError(null);
+                setSimLoading(true);
+                fetch(`${API_BASE}/config`)
+                  .then(res => {
+                    if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
+                    return res.json();
+                  })
+                  .then(data => {
+                    setConfig(data);
+                    if (data.models_loaded) {
+                      setActiveThresh(data.thresholds.xgb_f1);
+                    }
+                  })
+                  .catch(err => {
+                    console.error(err);
+                    setApiError("Could not connect to FastAPI backend API. Please make sure the backend is running (run: python main.py).");
+                  });
+              }}
+            >
+              <RefreshCw size={14} /> Retry Connection
+            </button>
+          </div>
+        )}
+
+        {/* Loading Spinner */}
+        {activeTab === 'simulator' && !apiError && simLoading && !simResult && (
+          <div className="glass-card" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '80px 20px', textAlign: 'center' }}>
+            <RefreshCw className="pulse-green" size={48} style={{ animation: 'spin 2s linear infinite', marginBottom: '20px' }} />
+            <h3 style={{ color: '#fff', marginBottom: '8px' }}>Initializing Simulator...</h3>
+            <p style={{ color: 'var(--text-muted)' }}>Retrieving initial telemetry and model evaluations from the ML server.</p>
+            <style>{`
+              @keyframes spin {
+                from { transform: rotate(0deg); }
+                to { transform: rotate(360deg); }
+              }
+            `}</style>
+          </div>
+        )}
+
         {/* ─────────────────────────────────────────────
             TAB 1: DIGITAL TWIN SIMULATOR
            ───────────────────────────────────────────── */}
-        {activeTab === 'simulator' && simResult && (
+        {activeTab === 'simulator' && !apiError && simResult && (
           <div>
             <div className="section-header">⚙️ Telemetry Controls & AI Assessment</div>
             <div className="grid-2">
@@ -498,7 +598,7 @@ export default function App() {
         {/* ─────────────────────────────────────────────
             TAB 4: FLEET BATCH ANALYZER
            ───────────────────────────────────────────── */}
-        {activeTab === 'batch' && (
+        {activeTab === 'batch' && !apiError && (
           <div>
             <div className="section-header">📦 Fleet Telemetry Batch Processing</div>
             
