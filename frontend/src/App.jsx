@@ -3,7 +3,8 @@ import React, { useState, useEffect, useRef } from 'react';
 import { 
   Activity, Clock, Database, FileText, Settings2, Shield, 
   AlertTriangle, CheckCircle2, RefreshCw, Plus, Trash2, 
-  Download, Upload, AlertCircle, Thermometer, ShieldAlert, Cpu
+  Download, Upload, AlertCircle, Thermometer, ShieldAlert, Cpu,
+  DollarSign, TrendingUp, TrendingDown, Bot, MessageSquare, Send, Sparkles, Calculator
 } from 'lucide-react';
 import { 
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, 
@@ -37,13 +38,33 @@ export default function App() {
   const [simWear, setSimWear] = useState(108);
   const [simResult, setSimResult] = useState(null);
 
+  // ── TAB: FINANCIAL ROI STATES ────────────────────────────────
+  const [downtimeCostHr, setDowntimeCostHr] = useState(2500);
+  const [unplannedHours, setUnplannedHours] = useState(12);
+  const [plannedHours, setPlannedHours] = useState(2);
+  const [replacementPartCost, setReplacementPartCost] = useState(4500);
+  const [plannedMaintCost, setPlannedMaintCost] = useState(800);
+  const [lostUnitsHr, setLostUnitsHr] = useState(50);
+  const [profitMarginUnit, setProfitMarginUnit] = useState(35);
+  const [finResult, setFinResult] = useState(null);
+  const [finLoading, setFinLoading] = useState(false);
 
+  // ── TAB: LOCAL AI ASSISTANT STATES ───────────────────────────
+  const [chatMessages, setChatMessages] = useState([
+    {
+      sender: 'assistant',
+      text: '👋 Hello! I am your Local Predictive Maintenance AI Assistant powered by local telemetry diagnostics.\nAsk me anything about machine failure risk, financial loss, tool wear, heat dissipation, or maintenance actions!'
+    }
+  ]);
+  const [chatInput, setChatInput] = useState('');
+  const [chatLoading, setChatLoading] = useState(false);
 
   // ── TAB 4: BATCH ANALYZER STATES ────────────────────────────
   const [batchData, setBatchData] = useState(null);
   const [batchLoading, setBatchLoading] = useState(false);
   const [useBuiltin, setUseBuiltin] = useState(false);
   const fileInputRef = useRef(null);
+
 
   // LOAD INITIAL CONFIG & THRESHOLDS
   // ─────────────────────────────────────────────
@@ -113,6 +134,87 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [simAir, simProc, simRpm, simTorque, simWear, simType, activeThresh]);
 
+  // ── FINANCIAL IMPACT CALCULATION EFFECT ──
+  const fetchFinancialImpact = () => {
+    const prob = simResult?.prediction?.probabilities?.XGBoost || 0.15;
+    setFinLoading(true);
+    fetch(`${API_BASE}/financial-impact`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        failure_probability: prob,
+        downtime_cost_per_hour: parseFloat(downtimeCostHr),
+        unplanned_downtime_hours: parseFloat(unplannedHours),
+        planned_downtime_hours: parseFloat(plannedHours),
+        replacement_part_cost: parseFloat(replacementPartCost),
+        planned_maintenance_cost: parseFloat(plannedMaintCost),
+        lost_units_per_hour: parseFloat(lostUnitsHr),
+        profit_margin_per_unit: parseFloat(profitMarginUnit)
+      })
+    })
+    .then(res => res.json())
+    .then(data => {
+      setFinResult(data);
+      setFinLoading(false);
+    })
+    .catch(err => {
+      console.error("Financial impact API error:", err);
+      setFinLoading(false);
+    });
+  };
+
+  useEffect(() => {
+    fetchFinancialImpact();
+  }, [simResult, downtimeCostHr, unplannedHours, plannedHours, replacementPartCost, plannedMaintCost, lostUnitsHr, profitMarginUnit]);
+
+  // ── LOCAL LLM QUERY HANDLER ──
+  const handleSendChat = (promptText) => {
+    const query = promptText || chatInput;
+    if (!query.trim() || chatLoading) return;
+
+    const userMsg = { sender: 'user', text: query };
+    setChatMessages(prev => [...prev, userMsg]);
+    if (!promptText) setChatInput('');
+    setChatLoading(true);
+
+    const telemetryCtx = {
+      rpm: simRpm,
+      torque: simTorque,
+      air_temp: simAir,
+      proc_temp: simProc,
+      tool_wear: simWear,
+      type_str: simType,
+      xgb_prob: simResult?.prediction?.probabilities?.XGBoost || 0.15
+    };
+
+    fetch(`${API_BASE}/llm-query`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        prompt: query,
+        context: telemetryCtx
+      })
+    })
+    .then(res => res.json())
+    .then(data => {
+      setChatMessages(prev => [...prev, {
+        sender: 'assistant',
+        source: data.source,
+        text: data.response
+      }]);
+      setChatLoading(false);
+    })
+    .catch(err => {
+      console.error("LLM Query error:", err);
+      setChatMessages(prev => [...prev, {
+        sender: 'assistant',
+        text: '❌ Could not connect to local AI assistant. Please check backend status.'
+      }]);
+      setChatLoading(false);
+    });
+  };
+
+
 
 
   // ─────────────────────────────────────────────
@@ -150,7 +252,13 @@ export default function App() {
       method: 'POST',
       body: formData
     })
-    .then(res => res.json())
+    .then(async (res) => {
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({ detail: "Failed to process batch file" }));
+        throw new Error(errJson.detail || `HTTP ${res.status}: Failed processing batch file`);
+      }
+      return res.json();
+    })
     .then(data => {
       // Override backend stats with client-side recomputed values
       if (data.records && data.records.length > 0) {
@@ -160,7 +268,8 @@ export default function App() {
       setBatchLoading(false);
     })
     .catch(err => {
-      alert("Failed processing batch file");
+      console.error("Batch processing error:", err);
+      alert(`Batch processing error: ${err.message || err}`);
       setBatchLoading(false);
     });
   };
@@ -180,10 +289,9 @@ export default function App() {
           processBatchFile(file);
         })
         .catch(err => {
-          // Fallback to fetch from root path or simulate
           setUseBuiltin(false);
           setBatchLoading(false);
-          alert("Built-in data is only available if ai4i2020.csv is in your React public/ folder.");
+          alert(`Built-in simulation error: ${err.message || err}`);
         });
     }
   }, [useBuiltin]);
@@ -254,7 +362,7 @@ export default function App() {
       <div className="main-content">
         <header className="app-header">
           <div className="header-title">
-            <h1>🏭 predictive maint system v3.0</h1>
+            <h1>🏭 Predictive Maintenance & Process Optimisation</h1>
             <p>
               <span className="pulse-indicator"></span> 
               STATUS: ONLINE &nbsp;|&nbsp; 
@@ -273,8 +381,16 @@ export default function App() {
           <button className={`tab-button ${activeTab === 'batch' ? 'active' : ''}`} onClick={() => setActiveTab('batch')}>
             <FileText size={16} /> Fleet Batch Analyzer
           </button>
-          
+
+          <button className={`tab-button ${activeTab === 'financial' ? 'active' : ''}`} onClick={() => setActiveTab('financial')}>
+            <DollarSign size={16} /> Financial ROI & Loss/Profit
+          </button>
+
+          <button className={`tab-button ${activeTab === 'assistant' ? 'active' : ''}`} onClick={() => setActiveTab('assistant')}>
+            <Bot size={16} /> Local AI Assistant
+          </button>
         </div>
+
 
         {/* Connection Error Message */}
         {apiError && (
@@ -614,14 +730,40 @@ export default function App() {
                   <input type="file" ref={fileInputRef} style={{ display: 'none' }} accept=".csv" onChange={handleFileUpload} />
                 </div>
                 
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <input 
-                    type="checkbox" 
-                    id="builtin_chk" 
-                    checked={useBuiltin} 
-                    onChange={(e) => setUseBuiltin(e.target.checked)} 
-                  />
-                  <label htmlFor="builtin_chk" style={{ cursor: 'pointer', fontSize: '0.9rem' }}>📂 Simulate Live Factory Stream (Analyze all 10,000 active records)</label>
+                <div style={{ marginTop: '12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <input 
+                      type="checkbox" 
+                      id="builtin_chk" 
+                      checked={useBuiltin} 
+                      onChange={(e) => setUseBuiltin(e.target.checked)} 
+                    />
+                    <label htmlFor="builtin_chk" style={{ cursor: 'pointer', fontSize: '0.9rem' }}>📂 Simulate Live Factory Stream (Analyze all 10,000 active records)</label>
+                  </div>
+
+                  <div style={{ display: 'flex', gap: '8px', marginTop: '4px', flexWrap: 'wrap' }}>
+                    <a 
+                      href="/ai4i2020_train_imbalanced.csv" 
+                      download="ai4i2020_train_imbalanced.csv"
+                      style={{ fontSize: '0.78rem', color: '#f59e0b', textDecoration: 'none', background: 'rgba(245,158,11,0.1)', padding: '4px 8px', borderRadius: '4px', border: '1px solid rgba(245,158,11,0.3)' }}
+                    >
+                      📥 Download Training Dataset (8,000 Rows)
+                    </a>
+                    <a 
+                      href="/ai4i2020_test_real.csv" 
+                      download="ai4i2020_test_real.csv"
+                      style={{ fontSize: '0.78rem', color: '#60a5fa', textDecoration: 'none', background: 'rgba(59,130,246,0.1)', padding: '4px 8px', borderRadius: '4px', border: '1px solid rgba(59,130,246,0.3)' }}
+                    >
+                      📥 Download Test Dataset (2,000 Rows)
+                    </a>
+                    <a 
+                      href="/sanity_test_100.csv" 
+                      download="sanity_test_100.csv"
+                      style={{ fontSize: '0.78rem', color: '#34d399', textDecoration: 'none', background: 'rgba(16,185,129,0.1)', padding: '4px 8px', borderRadius: '4px', border: '1px solid rgba(16,185,129,0.3)' }}
+                    >
+                      📥 Download Sanity 100 CSV
+                    </a>
+                  </div>
                 </div>
               </div>
 
@@ -741,9 +883,9 @@ export default function App() {
                       </tr>
                     </thead>
                     <tbody>
-                      {batchData.records.map((r, idx) => (
+                      {batchData.records.slice(0, 500).map((r, idx) => (
                         <tr key={idx}>
-                          <td style={{ color: '#fff', fontWeight: 600 }}>{r.UDI}</td>
+                          <td style={{ color: '#fff', fontWeight: 600 }}>{r.UDI || idx + 1}</td>
                           <td>{r.Type}</td>
                           <td>{r["Air temperature [K]"]}</td>
                           <td>{r["Process temperature [K]"]}</td>
@@ -753,9 +895,9 @@ export default function App() {
                           <td style={{ fontWeight: 600, color: '#fff' }}>{r["Failure Probability (%)"]}%</td>
                           <td>
                             <span className={`status-pill ${
-                              r["Risk Level"].includes('CRITICAL') ? 'critical' : (r["Risk Level"].includes('WARNING') ? 'warning' : 'safe')
+                              r["Risk Level"]?.includes('CRITICAL') ? 'critical' : (r["Risk Level"]?.includes('WARNING') ? 'warning' : 'safe')
                             }`}>
-                              {r["Risk Level"].split(' ').slice(1).join(' ')}
+                              {r["Risk Level"]?.split(' ').slice(1).join(' ') || r["Risk Level"]}
                             </span>
                           </td>
                         </tr>
@@ -763,6 +905,11 @@ export default function App() {
                     </tbody>
                   </table>
                 </div>
+                {batchData.records.length > 500 && (
+                  <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '8px', textAlign: 'center' }}>
+                    Displaying top 500 of {batchData.records.length.toLocaleString()} fleet records for smooth performance.
+                  </p>
+                )}
               </div>
             )}
 
@@ -775,7 +922,272 @@ export default function App() {
             )}
           </div>
         )}
+
+        {/* ── TAB 3: FINANCIAL ROI & LOSS/PROFIT IMPACT CALCULATOR ── */}
+        {activeTab === 'financial' && !apiError && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+            <div className="glass-card" style={{ padding: '24px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                <div>
+                  <h2 style={{ fontSize: '1.4rem', color: '#fff', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <DollarSign color="var(--color-primary)" /> Financial Loss & Profit ROI Estimator
+                  </h2>
+                  <p style={{ color: 'var(--text-muted)', fontSize: '0.88rem', marginTop: '4px' }}>
+                    Calculate financial consequences of machine failure vs. proactive maintenance based on current ML probability.
+                  </p>
+                </div>
+                {finResult && (
+                  <span className={`status-pill ${finResult.net_savings > 0 && finResult.failure_probability >= 0.35 ? 'critical' : 'safe'}`}>
+                    {finResult.recommendation}
+                  </span>
+                )}
+              </div>
+
+              {/* Financial Metrics Row */}
+              {finResult && (
+                <div className="metrics-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '16px', marginBottom: '24px' }}>
+                  <div className="metric-card" style={{ borderLeft: '4px solid var(--color-critical)' }}>
+                    <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Expected Failure Loss</div>
+                    <div style={{ fontSize: '1.8rem', fontWeight: '700', color: 'var(--color-critical)', margin: '4px 0' }}>
+                      ${finResult.expected_failure_loss.toLocaleString()}
+                    </div>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-dark)' }}>
+                      Risk-Weighted ({(finResult.failure_probability * 100).toFixed(1)}% prob)
+                    </div>
+                  </div>
+
+                  <div className="metric-card" style={{ borderLeft: '4px solid var(--color-primary)' }}>
+                    <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Preventive Repair Cost</div>
+                    <div style={{ fontSize: '1.8rem', fontWeight: '700', color: 'var(--color-primary)', margin: '4px 0' }}>
+                      ${finResult.planned_maintenance_cost.toLocaleString()}
+                    </div>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-dark)' }}>
+                      Scheduled downtime ({plannedHours} hrs) + parts
+                    </div>
+                  </div>
+
+                  <div className="metric-card" style={{ borderLeft: `4px solid ${finResult.net_savings > 0 ? 'var(--color-safe)' : 'var(--text-muted)'}` }}>
+                    <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Net Profit Saved</div>
+                    <div style={{ fontSize: '1.8rem', fontWeight: '700', color: finResult.net_savings > 0 ? 'var(--color-safe)' : '#fff', margin: '4px 0' }}>
+                      ${finResult.net_savings.toLocaleString()}
+                    </div>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-dark)' }}>
+                      ROI: <strong style={{ color: 'var(--color-safe)' }}>+{finResult.roi_pct}%</strong> profit preserved
+                    </div>
+                  </div>
+
+                  <div className="metric-card">
+                    <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Max Unplanned Breakdown Impact</div>
+                    <div style={{ fontSize: '1.8rem', fontWeight: '700', color: '#f87171', margin: '4px 0' }}>
+                      ${finResult.unplanned_breakdown_cost.toLocaleString()}
+                    </div>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-dark)' }}>
+                      If machine suffers total catastrophic failure
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Controls Sliders Grid */}
+              <h3 style={{ fontSize: '1.1rem', color: '#fff', marginBottom: '16px', borderTop: '1px solid var(--card-border)', paddingTop: '16px' }}>
+                ⚙️ Operational Financial Parameters
+              </h3>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '20px' }}>
+                
+                <div>
+                  <label style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--text-main)', fontSize: '0.85rem', marginBottom: '6px' }}>
+                    <span>Downtime Cost / Hour:</span>
+                    <strong style={{ color: 'var(--color-primary)' }}>${downtimeCostHr.toLocaleString()}/hr</strong>
+                  </label>
+                  <input 
+                    type="range" min="500" max="10000" step="250" 
+                    value={downtimeCostHr} 
+                    onChange={e => setDowntimeCostHr(e.target.value)} 
+                    style={{ width: '100%', accentColor: 'var(--color-primary)' }} 
+                  />
+                </div>
+
+                <div>
+                  <label style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--text-main)', fontSize: '0.85rem', marginBottom: '6px' }}>
+                    <span>Unplanned Breakdown Duration:</span>
+                    <strong style={{ color: 'var(--color-critical)' }}>{unplannedHours} hours</strong>
+                  </label>
+                  <input 
+                    type="range" min="1" max="48" step="1" 
+                    value={unplannedHours} 
+                    onChange={e => setUnplannedHours(e.target.value)} 
+                    style={{ width: '100%', accentColor: 'var(--color-critical)' }} 
+                  />
+                </div>
+
+                <div>
+                  <label style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--text-main)', fontSize: '0.85rem', marginBottom: '6px' }}>
+                    <span>Replacement Part Cost:</span>
+                    <strong style={{ color: '#fff' }}>${replacementPartCost.toLocaleString()}</strong>
+                  </label>
+                  <input 
+                    type="range" min="500" max="25000" step="500" 
+                    value={replacementPartCost} 
+                    onChange={e => setReplacementPartCost(e.target.value)} 
+                    style={{ width: '100%', accentColor: 'var(--color-warning)' }} 
+                  />
+                </div>
+
+                <div>
+                  <label style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--text-main)', fontSize: '0.85rem', marginBottom: '6px' }}>
+                    <span>Lost Units Produced / Hour:</span>
+                    <strong style={{ color: '#fff' }}>{lostUnitsHr} units/hr</strong>
+                  </label>
+                  <input 
+                    type="range" min="0" max="200" step="10" 
+                    value={lostUnitsHr} 
+                    onChange={e => setLostUnitsHr(e.target.value)} 
+                    style={{ width: '100%', accentColor: 'var(--color-primary)' }} 
+                  />
+                </div>
+
+                <div>
+                  <label style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--text-main)', fontSize: '0.85rem', marginBottom: '6px' }}>
+                    <span>Profit Margin per Unit:</span>
+                    <strong style={{ color: 'var(--color-safe)' }}>${profitMarginUnit}/unit</strong>
+                  </label>
+                  <input 
+                    type="range" min="5" max="150" step="5" 
+                    value={profitMarginUnit} 
+                    onChange={e => setProfitMarginUnit(e.target.value)} 
+                    style={{ width: '100%', accentColor: 'var(--color-safe)' }} 
+                  />
+                </div>
+
+                <div>
+                  <label style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--text-main)', fontSize: '0.85rem', marginBottom: '6px' }}>
+                    <span>Scheduled Maintenance Downtime:</span>
+                    <strong style={{ color: 'var(--color-safe)' }}>{plannedHours} hours</strong>
+                  </label>
+                  <input 
+                    type="range" min="0.5" max="8" step="0.5" 
+                    value={plannedHours} 
+                    onChange={e => setPlannedHours(e.target.value)} 
+                    style={{ width: '100%', accentColor: 'var(--color-safe)' }} 
+                  />
+                </div>
+
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── TAB 4: LOCAL AI MACHINE ASSISTANT ── */}
+        {activeTab === 'assistant' && !apiError && (
+          <div className="glass-card" style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '20px', minHeight: '650px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--card-border)', paddingBottom: '14px' }}>
+              <div>
+                <h2 style={{ fontSize: '1.4rem', color: '#fff', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <Bot color="var(--color-safe)" /> Local AI Machine Assistant & Advisory
+                </h2>
+                <p style={{ color: 'var(--text-muted)', fontSize: '0.88rem', marginTop: '4px' }}>
+                  Powered by <strong>Qwen2.5 3B LLM</strong> running locally via Ollama. Query machine health, diagnose failure modes, and calculate financial ROI.
+                </p>
+              </div>
+              <div style={{ background: 'rgba(16, 185, 129, 0.15)', border: '1px solid var(--color-safe)', padding: '6px 14px', borderRadius: '20px', fontSize: '0.8rem', color: 'var(--color-safe)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <Sparkles size={14} /> Telemetry Context Live
+              </div>
+            </div>
+
+            {/* Live Telemetry Context Strip */}
+            <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', background: 'rgba(0,0,0,0.25)', padding: '10px 16px', borderRadius: '8px', fontSize: '0.82rem', fontFamily: 'var(--font-mono)', border: '1px solid var(--card-border)' }}>
+              <span>RPM: <strong style={{ color: '#fff' }}>{simRpm}</strong></span>
+              <span>•</span>
+              <span>Torque: <strong style={{ color: '#fff' }}>{simTorque} Nm</strong></span>
+              <span>•</span>
+              <span>Air Temp: <strong style={{ color: '#fff' }}>{simAir} K</strong></span>
+              <span>•</span>
+              <span>Process Temp: <strong style={{ color: '#fff' }}>{simProc} K</strong></span>
+              <span>•</span>
+              <span>Tool Wear: <strong style={{ color: '#fff' }}>{simWear} min</strong></span>
+              <span>•</span>
+              <span>XGB Risk: <strong style={{ color: (simResult?.prediction?.probabilities?.XGBoost || 0.15) >= 0.35 ? 'var(--color-critical)' : 'var(--color-safe)' }}>{((simResult?.prediction?.probabilities?.XGBoost || 0.15)*100).toFixed(1)}%</strong></span>
+            </div>
+
+            {/* Quick Prompt Chips */}
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+              <button 
+                onClick={() => handleSendChat("Calculate financial loss if this machine suffers an unplanned failure")} 
+                style={{ background: 'rgba(59, 130, 246, 0.12)', border: '1px solid rgba(59, 130, 246, 0.3)', color: '#60a5fa', padding: '6px 12px', borderRadius: '16px', fontSize: '0.8rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                💰 Calculate Financial Loss
+              </button>
+
+              <button 
+                onClick={() => handleSendChat("Why is tool wear high and what action should I take?")} 
+                style={{ background: 'rgba(245, 158, 11, 0.12)', border: '1px solid rgba(245, 158, 11, 0.3)', color: '#fbbf24', padding: '6px 12px', borderRadius: '16px', fontSize: '0.8rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                🛠️ Tool Wear Diagnostics
+              </button>
+
+              <button 
+                onClick={() => handleSendChat("Is current torque and RPM within safe mechanical limits?")} 
+                style={{ background: 'rgba(16, 185, 129, 0.12)', border: '1px solid rgba(16, 185, 129, 0.3)', color: '#34d399', padding: '6px 12px', borderRadius: '16px', fontSize: '0.8rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                ⚡ Torque & Mechanical Strain
+              </button>
+
+              <button 
+                onClick={() => handleSendChat("Give me a full predictive maintenance recommendation report")} 
+                style={{ background: 'rgba(239, 68, 68, 0.12)', border: '1px solid rgba(239, 68, 68, 0.3)', color: '#f87171', padding: '6px 12px', borderRadius: '16px', fontSize: '0.8rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                📋 Maintenance Summary Report
+              </button>
+            </div>
+
+            {/* Chat Box Conversation History */}
+            <div style={{ flex: '1', minHeight: '350px', maxHeight: '500px', overflowY: 'auto', background: 'rgba(6, 9, 16, 0.6)', border: '1px solid var(--card-border)', borderRadius: '10px', padding: '16px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
+              {chatMessages.map((msg, idx) => (
+                <div key={idx} style={{ alignSelf: msg.sender === 'user' ? 'flex-end' : 'flex-start', maxWidth: '85%' }}>
+                  <div style={{ fontSize: '0.72rem', color: 'var(--text-dark)', marginBottom: '4px', textAlign: msg.sender === 'user' ? 'right' : 'left' }}>
+                    {msg.sender === 'user' ? 'You (Operator)' : (msg.source || 'Local AI Assistant')}
+                  </div>
+                  <div style={{
+                    background: msg.sender === 'user' ? 'var(--color-primary)' : 'rgba(30, 41, 59, 0.85)',
+                    color: '#fff',
+                    padding: '12px 16px',
+                    borderRadius: '12px',
+                    borderTopLeftRadius: msg.sender === 'user' ? '12px' : '2px',
+                    borderTopRightRadius: msg.sender === 'user' ? '2px' : '12px',
+                    fontSize: '0.9rem',
+                    lineHeight: '1.5',
+                    whiteSpace: 'pre-wrap',
+                    border: msg.sender === 'user' ? 'none' : '1px solid var(--card-border)'
+                  }}>
+                    {msg.text}
+                  </div>
+                </div>
+              ))}
+              {chatLoading && (
+                <div style={{ alignSelf: 'flex-start', background: 'rgba(30, 41, 59, 0.5)', padding: '10px 14px', borderRadius: '12px', fontSize: '0.85rem', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <RefreshCw size={14} style={{ animation: 'spin 1.5s infinite linear' }} />
+                  Thinking and querying local LLM...
+                </div>
+              )}
+            </div>
+
+            {/* Chat Input Bar */}
+            <form onSubmit={e => { e.preventDefault(); handleSendChat(); }} style={{ display: 'flex', gap: '10px' }}>
+              <input 
+                type="text" 
+                placeholder="Ask about machine status, failure risks, tool wear, financial impact..." 
+                value={chatInput} 
+                onChange={e => setChatInput(e.target.value)} 
+                style={{ flex: '1', background: 'rgba(15, 23, 42, 0.8)', border: '1px solid var(--card-border)', borderRadius: '8px', padding: '12px 16px', color: '#fff', fontSize: '0.92rem', outline: 'none' }}
+              />
+              <button 
+                type="submit" 
+                disabled={chatLoading || !chatInput.trim()} 
+                className="tab-button active" 
+                style={{ padding: '0 24px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', opacity: (chatLoading || !chatInput.trim()) ? 0.5 : 1 }}>
+                <Send size={16} /> Ask LLM
+              </button>
+            </form>
+          </div>
+        )}
       </div>
+
     </div>
   );
 }

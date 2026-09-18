@@ -1,5 +1,7 @@
 import os
 import pickle
+import json
+import requests
 import numpy as np
 import pandas as pd
 from typing import Dict, List, Optional
@@ -11,6 +13,7 @@ import ttf_engine
 from ttf_engine import run_ttf_forecast, DEFAULT_DEGRADATION
 from machine_registry import MachineRegistry, ML_COMPATIBLE_TYPES
 from heat_exchanger_analyzer import HXUnit, analyze_hx_fleet
+import wear_band_policy
 
 # ─────────────────────────────────────────────
 # INITIALIZATION & SETUP
@@ -61,6 +64,14 @@ try:
         
     with open(os.path.join(MODEL_DIR, "fleet_medians.pkl"), "rb") as f:
         fleet_medians = pickle.load(f)
+
+    # Load deterministic wear-band decision policy (tunable, not hardcoded).
+    # wear_window_low/high define the TWF stochastic risk window — no probability
+    # gate is applied inside it; wear band membership alone triggers ELEVATED_WEAR_WATCH.
+    _wb_policy     = wear_band_policy.load_policy(os.path.join(MODEL_DIR, "wear_band_policy.pkl"))
+    WEAR_WINDOW_LOW  = float(_wb_policy['wear_window_low'])
+    WEAR_WINDOW_HIGH = float(_wb_policy['wear_window_high'])
+
     models_loaded = True
 except Exception as e:
     print(f"Error loading models: {e}")
@@ -68,17 +79,19 @@ except Exception as e:
     xgb_thresh_f1, xgb_thresh_safety, rf_thresh_f1, rf_thresh_safety = 0.3, 0.1, 0.3, 0.1
     FEATURE_COLS = []
     fleet_medians = {}
+    WEAR_WINDOW_LOW  = wear_band_policy.WEAR_WINDOW_LOW
+    WEAR_WINDOW_HIGH = wear_band_policy.WEAR_WINDOW_HIGH
 
-# Helper to engineer features
+# Helper to engineer features (column order must match FEATURE_COLS in 1_train_model.py)
 def engineer_features(air_temp: float, proc_temp: float, rpm: float, torque: float, tool_wear: float, type_enc: int):
-    temp_delta = proc_temp - air_temp
-    power_W = torque * rpm * (2 * np.pi / 60)
-    torque_x_wear = torque * tool_wear
-    wear_pct = tool_wear / 253.0
-    high_torque = 1 if torque > 55 else 0
-    high_wear = 1 if tool_wear > 200 else 0
+    power_watts         = (2 * np.pi / 60) * rpm * torque
+    temp_diff_K         = proc_temp - air_temp
+    wear_torque_product = tool_wear * torque
+    wear_pct            = tool_wear / 253.0
+    high_torque         = 1 if torque > 55 else 0
+    high_wear           = 1 if tool_wear > 200 else 0
     return [type_enc, air_temp, proc_temp, rpm, torque, tool_wear,
-            temp_delta, power_W, torque_x_wear, wear_pct, high_torque, high_wear]
+            power_watts, temp_diff_K, wear_torque_product, wear_pct, high_torque, high_wear]
 
 # Helper to extract anomalies
 def get_anomalies(air_temp: float, proc_temp: float, rpm: float, torque: float, tool_wear: float):
@@ -289,42 +302,88 @@ async def batch_process(file: UploadFile = File(...), active_thresh: float = For
         raise HTTPException(status_code=500, detail="ML models not loaded")
         
     try:
-        df_raw = pd.read_csv(file.file)
+        content = await file.read()
+        import io
+        df_raw = None
+        for sep in [',', ';', '\t']:
+            try:
+                temp_df = pd.read_csv(io.BytesIO(content), sep=sep)
+                if len(temp_df.columns) > 1:
+                    df_raw = temp_df
+                    break
+            except Exception:
+                continue
+        if df_raw is None:
+            df_raw = pd.read_csv(io.BytesIO(content))
+            
+        # Clean column names (strip BOM, spaces, quotes)
+        df_raw.columns = [str(c).strip().lstrip('\ufeff').strip('"').strip("'") for c in df_raw.columns]
+        
+        # Column aliases for flexible matching
+        alias_map = {
+            "Type": ["type", "product_type", "product type", "machine_type", "machine type"],
+            "Air temperature [K]": ["air temperature [k]", "air temperature", "air_temperature", "air_temp", "air temp", "air_temp_k"],
+            "Process temperature [K]": ["process temperature [k]", "process temperature", "process_temperature", "proc_temp", "process_temp", "process_temp_k"],
+            "Rotational speed [rpm]": ["rotational speed [rpm]", "rotational speed", "rotational_speed", "rpm", "speed", "rotational_speed_rpm"],
+            "Torque [Nm]": ["torque [nm]", "torque", "torque_nm", "torque (nm)"],
+            "Tool wear [min]": ["tool wear [min]", "tool wear", "tool_wear", "wear", "tool_wear_min", "tool wear (min)"],
+            "Machine failure": ["machine failure", "machine_failure", "failure", "target"]
+        }
+        
+        col_rename = {}
+        for col in df_raw.columns:
+            col_lower = col.lower().strip()
+            for target_col, aliases in alias_map.items():
+                if target_col not in col_rename.values():
+                    if col_lower == target_col.lower() or col_lower in aliases:
+                        col_rename[col] = target_col
+                        break
+        df_raw.rename(columns=col_rename, inplace=True)
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Invalid CSV: {e}")
+        raise HTTPException(status_code=400, detail=f"Invalid CSV format: {e}")
         
     # Check headers
     needed = ["Type", "Air temperature [K]", "Process temperature [K]",
               "Rotational speed [rpm]", "Torque [Nm]", "Tool wear [min]"]
     missing = [c for c in needed if c not in df_raw.columns]
     if missing:
-        raise HTTPException(status_code=400, detail=f"Missing columns: {missing}")
+        raise HTTPException(status_code=400, detail=f"Missing columns: {missing}. Found columns: {df_raw.columns.tolist()}")
         
     type_enc = {"L": 0, "M": 1, "H": 2}
     df = df_raw.copy()
-    df["Type_encoded"]  = df["Type"].map(type_enc).fillna(1).astype(int)
-    df["temp_delta"]    = df["Process temperature [K]"] - df["Air temperature [K]"]
-    df["power_W"]       = df["Torque [Nm]"] * df["Rotational speed [rpm]"] * (2 * np.pi / 60)
-    df["torque_x_wear"] = df["Torque [Nm]"] * df["Tool wear [min]"]
-    df["wear_pct"]      = df["Tool wear [min]"] / 253.0
-    df["high_torque"]   = (df["Torque [Nm]"] > 55).astype(int)
-    df["high_wear"]     = (df["Tool wear [min]"] > 200).astype(int)
+    df["Type_encoded"]        = df["Type"].map(type_enc).fillna(1).astype(int)
+    df["power_watts"]         = (2 * np.pi / 60) * df["Rotational speed [rpm]"] * df["Torque [Nm]"]
+    df["temp_diff_K"]         = df["Process temperature [K]"] - df["Air temperature [K]"]
+    df["wear_torque_product"] = df["Tool wear [min]"] * df["Torque [Nm]"]
+    df["wear_pct"]            = df["Tool wear [min]"] / 253.0
+    df["high_torque"]         = (df["Torque [Nm]"] > 55).astype(int)
+    df["high_wear"]           = (df["Tool wear [min]"] > 200).astype(int)
     
     X_scaled = scaler.transform(df[FEATURE_COLS])
     proba = xgb_model.predict_proba(X_scaled)[:, 1]
-    
-    df["Failure Probability (%)"] = (proba * 100).round(2)
-    df["Predicted Failure"]       = (proba >= active_thresh).astype(int)
-    df["Risk Level"] = df["Failure Probability (%)"].apply(
-        lambda p: "🔴 CRITICAL" if p > 70 else ("🟡 WARNING" if p >= 35 else "🟢 SAFE")
+    tool_wear_arr = df["Tool wear [min]"].values
+
+    # Apply deterministic wear-band decision policy.
+    # See wear_band_policy.py for full rationale.
+    # ELEVATED_WEAR_WATCH is assigned purely by tool_wear position in the TWF
+    # stochastic risk window — model probability is NOT checked for this tier.
+    predicted_arr, tier_labels = wear_band_policy.apply(
+        proba, tool_wear_arr, active_thresh,
+        wear_window_low=WEAR_WINDOW_LOW,
+        wear_window_high=WEAR_WINDOW_HIGH,
     )
-    
-    total = len(df)
-    n_critical = int((df["Risk Level"] == "🔴 CRITICAL").sum())
-    n_warning  = int((df["Risk Level"] == "🟡 WARNING").sum())
-    n_safe     = int((df["Risk Level"] == "🟢 SAFE").sum())
-    n_predicted = int(df["Predicted Failure"].sum())
-    
+
+    df["Failure Probability (%)"] = (proba * 100).round(2)
+    df["Predicted Failure"]       = predicted_arr
+    df["Risk Level"]              = tier_labels
+
+    total               = len(df)
+    n_critical          = int((df["Risk Level"] == "CRITICAL").sum())
+    n_elevated_wear     = int((df["Risk Level"] == "ELEVATED_WEAR_WATCH").sum())
+    n_warning           = int((df["Risk Level"] == "WARNING").sum())
+    n_safe              = int((df["Risk Level"] == "SAFE").sum())
+    n_predicted         = int(df["Predicted Failure"].sum())
+
     # Check if target is present
     eval_metrics = None
     if "Machine failure" in df.columns:
@@ -334,32 +393,35 @@ async def batch_process(file: UploadFile = File(...), active_thresh: float = For
         )
         y_true = df["Machine failure"].astype(int)
         y_pred = df["Predicted Failure"].astype(int)
-        
-        acc = accuracy_score(y_true, y_pred)
-        prec = precision_score(y_true, y_pred, zero_division=0)
-        rec = recall_score(y_true, y_pred, zero_division=0)
-        f1 = f1_score(y_true, y_pred, zero_division=0)
+
+        acc    = accuracy_score(y_true, y_pred)
+        prec   = precision_score(y_true, y_pred, zero_division=0)
+        rec    = recall_score(y_true, y_pred, zero_division=0)
+        f1     = f1_score(y_true, y_pred, zero_division=0)
         pr_auc = average_precision_score(y_true, proba)
         tn, fp, fn, tp = confusion_matrix(y_true, y_pred).ravel()
-        
+
         eval_metrics = {
-            "accuracy": float(acc),
-            "precision": float(prec),
-            "recall": float(rec),
-            "f1_score": float(f1),
-            "pr_auc": float(pr_auc),
-            "false_positives": int(fp),
-            "false_negatives": int(fn)
+            "accuracy":         float(acc),
+            "precision":        float(prec),
+            "recall":           float(rec),
+            "f1_score":         float(f1),
+            "pr_auc":           float(pr_auc),
+            "false_positives":  int(fp),
+            "false_negatives":  int(fn),
         }
-        
+
     return {
         "records": df.to_dict(orient="records"),
         "stats": {
-            "total": total,
-            "critical": n_critical,
-            "warning": n_warning,
-            "safe": n_safe,
-            "alarms": n_predicted
+            "total":             total,
+            "critical":          n_critical,
+            "elevated_wear":     n_elevated_wear,
+            "warning":           n_warning,
+            "safe":              n_safe,
+            "alarms":            n_predicted,
+            "wear_window_low":    WEAR_WINDOW_LOW,
+            "wear_window_high":   WEAR_WINDOW_HIGH,
         },
         "evaluation": eval_metrics
     }
@@ -514,8 +576,167 @@ def get_historical_distribution(column: str):
     df_sample = df[[column, "Machine failure"]].dropna()
     return df_sample.to_dict(orient="records")
 
+# ─────────────────────────────────────────────
+# FINANCIAL IMPACT & LOCAL LLM ENDPOINTS
+# ─────────────────────────────────────────────
+class FinancialImpactRequest(BaseModel):
+    failure_probability: float  # e.g. 0.85
+    downtime_cost_per_hour: float = 2500.0  # $/hr
+    unplanned_downtime_hours: float = 12.0  # hrs
+    planned_downtime_hours: float = 2.0     # hrs
+    replacement_part_cost: float = 4500.0   # $
+    planned_maintenance_cost: float = 800.0  # $
+    lost_units_per_hour: float = 50.0       # units/hr
+    profit_margin_per_unit: float = 35.0    # $/unit
+
+@app.post("/api/financial-impact")
+def calculate_financial_impact(req: FinancialImpactRequest):
+    p_fail = max(0.0, min(1.0, req.failure_probability))
+    
+    # Unplanned breakdown cost
+    downtime_loss = req.unplanned_downtime_hours * req.downtime_cost_per_hour
+    production_loss = req.unplanned_downtime_hours * req.lost_units_per_hour * req.profit_margin_per_unit
+    unplanned_total = downtime_loss + req.replacement_part_cost + production_loss
+    
+    # Expected loss based on machine failure probability
+    expected_failure_loss = p_fail * unplanned_total
+    
+    # Planned maintenance cost
+    planned_downtime_loss = req.planned_downtime_hours * req.downtime_cost_per_hour
+    planned_total = planned_downtime_loss + req.planned_maintenance_cost
+    
+    # Savings & ROI if proactive maintenance is performed
+    net_savings = expected_failure_loss - planned_total
+    roi_pct = (net_savings / planned_total * 100.0) if planned_total > 0 else 0.0
+    
+    return {
+        "failure_probability": p_fail,
+        "unplanned_breakdown_cost": round(unplanned_total, 2),
+        "expected_failure_loss": round(expected_failure_loss, 2),
+        "planned_maintenance_cost": round(planned_total, 2),
+        "net_savings": round(net_savings, 2),
+        "roi_pct": round(roi_pct, 1),
+        "recommendation": "PROACTIVE MAINTENANCE HIGHLY RECOMMENDED" if net_savings > 0 and p_fail >= 0.35 else "MONITOR TELEMETRY — SCHEDULE ROUTINE MAINTENANCE"
+    }
+
+class LLMQueryRequest(BaseModel):
+    prompt: str
+    context: Optional[Dict] = None
+    model: Optional[str] = "qwen2.5:3b"
+
+@app.post("/api/llm-query")
+def query_local_llm(req: LLMQueryRequest):
+    user_prompt = req.prompt.strip()
+    ctx = req.context or {}
+    candidate_models = [req.model, "qwen2.5:3b", "qwen2.5:0.5b", "qwen2.5:1.5b", "qwen2.5:7b"]
+    # Filter unique non-empty models
+    models_to_try = []
+    for m in candidate_models:
+        if m and m not in models_to_try:
+            models_to_try.append(m)
+
+    # 1. Try connecting to Local Ollama instance (http://localhost:11434) running Qwen2.5 LLMs
+    sys_prompt = (
+        "You are an expert Industrial Reliability & Predictive Maintenance AI Assistant. "
+        "Analyze the machine telemetry and answer the user question with precise engineering recommendations."
+    )
+    if ctx:
+        sys_prompt += f" Current Telemetry Context: {json.dumps(ctx)}"
+
+    for model_name in models_to_try:
+        try:
+            ollama_res = requests.post(
+                "http://localhost:11434/api/generate",
+                json={
+                    "model": model_name,
+                    "prompt": f"{sys_prompt}\n\nUser Question: {user_prompt}",
+                    "stream": False
+                },
+                timeout=120.0
+            )
+
+            if ollama_res.status_code == 200:
+                data = ollama_res.json()
+                llm_text = data.get("response", "").strip()
+                if llm_text:
+                    return {
+                        "source": f"Local Ollama LLM ({model_name})",
+                        "response": llm_text
+                    }
+        except Exception as e:
+            print(f"Ollama query attempt for {model_name} failed: {e}")
+
+    # 2. Local Domain Expert AI Engine (Zero-dependency fallback)
+
+
+    prompt_lower = user_prompt.lower()
+    rpm = ctx.get("rpm", 1500)
+    torque = ctx.get("torque", 40.0)
+    air_temp = ctx.get("air_temp", 300.0)
+    proc_temp = ctx.get("proc_temp", 310.0)
+    tool_wear = ctx.get("tool_wear", 108)
+    fail_prob = ctx.get("xgb_prob", ctx.get("rf_prob", 0.15))
+    
+    ans_lines = []
+    
+    if "loss" in prompt_lower or "profit" in prompt_lower or "cost" in prompt_lower or "financial" in prompt_lower:
+        downtime_loss = 12 * 2500.0 + 4500.0 + (12 * 50 * 35.0)
+        exp_loss = fail_prob * downtime_loss
+        ans_lines.append(f"💰 **Financial Loss & ROI Analysis:**")
+        ans_lines.append(f"• Current Failure Risk: **{fail_prob*100:.1f}%**")
+        ans_lines.append(f"• Unplanned Breakdown Impact: **${downtime_loss:,.2f}** (includes $30,000 downtime, $4,500 replacement parts, $21,000 lost production margin).")
+        ans_lines.append(f"• Risk-Weighted Expected Loss: **${exp_loss:,.2f}**.")
+        ans_lines.append(f"• Scheduled Preventive Repair Cost: **$5,800.00**.")
+        if exp_loss > 5800:
+            ans_lines.append(f"• **Recommendation:** Performing proactive maintenance saves **${exp_loss - 5800:,.2f}** net profit!")
+        else:
+            ans_lines.append(f"• **Recommendation:** Equipment is currently stable. Maintain routine inspection schedule.")
+
+    elif "tool wear" in prompt_lower or "wear" in prompt_lower:
+        ans_lines.append(f"🛠️ **Tool Wear Diagnostics:**")
+        ans_lines.append(f"• Current Tool Wear: **{tool_wear} minutes**.")
+        if tool_wear >= 200:
+            ans_lines.append("⚠️ **CRITICAL WARNING:** Tool wear exceeds 200 minutes! High probability of Tool Wear Failure (TWF). Immediately queue tool insert replacement.")
+        elif tool_wear >= 150:
+            ans_lines.append("🟡 **ELEVATED WEAR:** Tool is in moderate wear phase. Plan tool swap during next scheduled maintenance window.")
+        else:
+            ans_lines.append("🟢 **STABLE WEAR:** Tool wear is well within operational safety margins (safety limit = 200 min).")
+
+    elif "torque" in prompt_lower or "rpm" in prompt_lower or "overstrain" in prompt_lower:
+        power_kw = (2 * 3.14159 * rpm * torque) / 60000.0
+        ans_lines.append(f"⚡ **Power & Mechanical Overstrain Diagnostics:**")
+        ans_lines.append(f"• Operating RPM: **{rpm} RPM** | Torque: **{torque} Nm**")
+        ans_lines.append(f"• Calculated Shaft Mechanical Power: **{power_kw:.2f} kW**.")
+        if torque * rpm > 80000:
+            ans_lines.append("⚠️ **HIGH TORQUE / OVERSTRAIN RISK:** High torque combined with current RPM creates elevated power strain (OSF/PWF risk). Reduce feed rate or lower spindle speed.")
+        else:
+            ans_lines.append("🟢 **NORMAL STRAIN:** Mechanical load and power output are within design envelope.")
+
+    elif "heat" in prompt_lower or "temperature" in prompt_lower or "fouling" in prompt_lower:
+        dT = proc_temp - air_temp
+        ans_lines.append(f"🌡️ **Thermal & Heat Exchanger Diagnostics:**")
+        ans_lines.append(f"• Ambient Temp: **{air_temp:.1f} K** | Process Temp: **{proc_temp:.1f} K** (Delta T = **{dT:.1f} K**)")
+        if dT < 8.6:
+            ans_lines.append("⚠️ **HEAT DISSIPATION FAILURE (HDF):** Temperature difference is below 8.6 K under high load! Heat dissipation efficiency is severely compromised.")
+        else:
+            ans_lines.append("🟢 **THERMAL BALANCE:** Thermal gradient is sufficient for stable cooling operations.")
+
+    else:
+        ans_lines.append(f"🤖 **Predictive Maintenance Engineering Assessment:**")
+        ans_lines.append(f"• Current Machine Failure Probability: **{fail_prob*100:.1f}%**")
+        ans_lines.append(f"• Telemetry State: RPM={rpm}, Torque={torque}Nm, Temp={proc_temp}K, Wear={tool_wear}min.")
+        if fail_prob >= 0.35:
+            ans_lines.append("🚨 **ACTION REQUIRED:** Elevated failure risk detected! Check tool wear and mechanical torque levels immediately.")
+        else:
+            ans_lines.append("✅ **SYSTEM HEALTHY:** Telemetry metrics indicate normal operation across all monitored failure modes.")
+
+    return {
+        "source": "Local Predictive Maintenance Expert AI Engine",
+        "response": "\n\n".join(ans_lines)
+    }
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
 
-# Force reload - retrained 12-feature model 2
+# Force reload - retrained 12-feature model 2

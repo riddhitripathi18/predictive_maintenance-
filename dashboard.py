@@ -379,7 +379,7 @@ def prepare_batch(df_raw):
 # ─────────────────────────────────────────────
 st.markdown("""
 <div style='margin-bottom: 20px;'>
-  <h1 style='color:#3b82f6; margin:0; font-size:2.2rem; font-weight:700; letter-spacing:-0.5px;'>🏭 predictive_maint_system_v3.0</h1>
+  <h1 style='color:#3b82f6; margin:0; font-size:2.2rem; font-weight:700; letter-spacing:-0.5px;'>🏭 Predictive Maintenance & Process Optimisation</h1>
   <p style='color:#64748b; margin:6px 0 0 0; font-size:0.95rem; font-family:"JetBrains Mono", monospace;'>
     ENGINE: XGBoost + Random Forest &nbsp;|&nbsp; DATASET: AI4I 2020 &nbsp;|&nbsp; STATUS: <span class="pulse-indicator"></span> ONLINE
   </p>
